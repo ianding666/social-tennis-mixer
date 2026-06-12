@@ -73,7 +73,7 @@ export default function App() {
   return (
     <>
       <header className="app-header">
-        <img src="/logo.png" alt="Tennis Masters Auckland" className="app-logo" />
+        <img src={`${import.meta.env.BASE_URL}logo.png`} alt="Tennis Masters Auckland" className="app-logo" />
         <nav>
           <button className={view === 'directory' ? 'active' : ''} onClick={() => setView('directory')}>
             Player Directory
