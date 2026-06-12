@@ -125,7 +125,7 @@ export default function DirectoryView({ players, onUpsert, onRemove }: Props) {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `tennis-players-${new Date().toISOString().slice(0, 10)}.json`;
+    a.download = `tennis-mixer-player-drectory-${new Date().toISOString().slice(0, 10)}.json`;
     a.click();
     URL.revokeObjectURL(url);
   };
