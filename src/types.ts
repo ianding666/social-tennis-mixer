@@ -23,6 +23,9 @@ export interface SessionPlayer {
 
 export type PairingMode = 'balanced' | 'mixed';
 
+/** Preferred gender composition of each Pair for a round. */
+export type GenderMode = 'same' | 'mixed';
+
 export type MatchFormat = 'doubles' | 'singles' | 'uneven';
 
 /** Two sides on one court for one round. Sides hold player ids. */
@@ -36,6 +39,8 @@ export interface Match {
 export interface Round {
   index: number;
   pairingMode: PairingMode;
+  /** Preferred gender composition of Pairs (defaults to 'same' for legacy rounds). */
+  genderMode: GenderMode;
   matches: Match[];
   byes: string[];
   /** Locked rounds are treated as fixed history and not regenerated. */

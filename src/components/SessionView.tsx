@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import type { Gender, Match, PairingMode, Player, Round, Session, SessionPlayer } from '../types';
+import type { Gender, GenderMode, Match, PairingMode, Player, Round, Session, SessionPlayer } from '../types';
 import { GRADE_MAX, GRADE_MIN } from '../types';
 import { deriveHistory, generateRound, isMenVsWomen, matchGap, planRound, type PlayerLite } from '../draw';
 import { uid } from '../util';
@@ -49,6 +49,7 @@ function swapInRound(round: Round, a: string, b: string): Round {
 export default function SessionView({ session, players, onChange, onAddPlayerToDirectory }: Props) {
   const [search, setSearch] = useState('');
   const [nextMode, setNextMode] = useState<PairingMode>('balanced');
+  const [nextGenderMode, setNextGenderMode] = useState<GenderMode>('same');
   const [selected, setSelected] = useState<{ round: number; id: string } | null>(null);
   const [walkin, setWalkin] = useState({ name: '', grade: '6', gender: 'M' as Gender, phone: '' });
 
@@ -130,6 +131,7 @@ export default function SessionView({ session, players, onChange, onAddPlayerToD
     const round = generateRound({
       active: activeLite,
       mode: nextMode,
+      genderMode: nextGenderMode,
       config: session.config,
       history,
       index: session.rounds.length
@@ -146,6 +148,7 @@ export default function SessionView({ session, players, onChange, onAddPlayerToD
     const round = generateRound({
       active: activeLite,
       mode: last.pairingMode,
+      genderMode: last.genderMode ?? 'same',
       config: session.config,
       history,
       index: i
@@ -377,10 +380,20 @@ export default function SessionView({ session, players, onChange, onAddPlayerToD
           <h3>Generate</h3>
           <div className="row">
             <label className="small">
-              Mode{' '}
+              Grading Mode{' '}
               <select value={nextMode} onChange={(e) => setNextMode(e.target.value as PairingMode)}>
                 <option value="balanced">Balanced (similar grades)</option>
                 <option value="mixed">Mixed (strong + weak)</option>
+              </select>
+            </label>
+            <label className="small">
+              Gender Mode{' '}
+              <select
+                value={nextGenderMode}
+                onChange={(e) => setNextGenderMode(e.target.value as GenderMode)}
+              >
+                <option value="same">Same gender</option>
+                <option value="mixed">Mixed gender</option>
               </select>
             </label>
             <button className="primary" onClick={generateNext}>
@@ -460,7 +473,8 @@ function RoundCard({ round, grade, gender, name, tolerance, selected, onChip, on
       <div className="row between">
         <h3>
           Round {round.index + 1}{' '}
-          <span className="badge">{round.pairingMode === 'balanced' ? 'Balanced' : 'Mixed'}</span>
+          <span className="badge">{round.pairingMode === 'balanced' ? 'Balanced' : 'Mixed'}</span>{' '}
+          <span className="badge">{(round.genderMode ?? 'same') === 'same' ? 'Same gender' : 'Mixed gender'}</span>
         </h3>
         <label className="small no-print">
           <input type="checkbox" checked={round.locked} onChange={onToggleLock} /> Lock

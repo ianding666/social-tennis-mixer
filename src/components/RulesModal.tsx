@@ -15,7 +15,7 @@ export default function RulesModal({ onClose }: Props) {
 
         <p className="muted small">
           Grade is the Tennis Seniors division 2–12 (lower = stronger) and is used exactly as entered.
-          Gender is used only to avoid all-men vs all-women matches.
+          Gender is used to honour the round's Gender mode (same-gender or mixed Pairs).
         </p>
 
         <h3>Each round is built in two stages</h3>
@@ -57,8 +57,10 @@ export default function RulesModal({ onClose }: Props) {
             This is the top priority.
           </li>
           <li>
-            <strong>Avoid 2 men vs 2 women</strong> — a court of two men and two women is paired mixed
-            (MF vs MF) where possible.
+            <strong>Gender mode</strong> (chosen per round) — <strong>Same gender</strong> pairs two
+            men or two women together (and keeps men's Pairs facing men's, women's facing women's);{' '}
+            <strong>Mixed gender</strong> pairs one man with one woman. Soft: only overridden when no
+            even-enough alternative exists.
           </li>
           <li>
             <strong>Fresh partners</strong> — avoid repeating partners played with earlier in the session.

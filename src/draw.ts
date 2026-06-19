@@ -1,4 +1,4 @@
-import type { Match, MatchFormat, PairingMode, Round, SessionConfig } from './types';
+import type { GenderMode, Match, MatchFormat, PairingMode, Round, SessionConfig } from './types';
 import { shuffle } from './util';
 
 export interface PlayerLite {
@@ -116,6 +116,7 @@ function scoreMatches(
   matches: Match[],
   lite: Map<string, PlayerLite>,
   mode: PairingMode,
+  genderMode: GenderMode,
   config: SessionConfig,
   history: DrawHistory
 ): number {
@@ -130,8 +131,17 @@ function scoreMatches(
     penalty += W_EVEN * Math.max(0, gap - config.evenTolerance) ** 2;
     penalty += W_EVEN_SOFT * gap;
 
-    // avoid all-men vs all-women (doubles only)
-    if (m.sideA.length === 2 && m.sideB.length === 2) {
+    // Gender Mode: prefer the chosen composition of each Pair.
+    for (const side of [m.sideA, m.sideB]) {
+      if (side.length === 2) {
+        const sameGenderPair = gender(side[0]) === gender(side[1]);
+        const wantsSame = genderMode === 'same';
+        if (sameGenderPair !== wantsSame) penalty += W_GENDER;
+      }
+    }
+
+    // Same-gender mode: also keep MM vs MM / FF vs FF (avoid MM vs FF, doubles only).
+    if (genderMode === 'same' && m.sideA.length === 2 && m.sideB.length === 2) {
       const allMenA = m.sideA.every((p) => gender(p) === 'M');
       const allWomenA = m.sideA.every((p) => gender(p) === 'F');
       const allMenB = m.sideB.every((p) => gender(p) === 'M');
@@ -168,12 +178,13 @@ function optimise(
   formats: MatchFormat[],
   lite: Map<string, PlayerLite>,
   mode: PairingMode,
+  genderMode: GenderMode,
   config: SessionConfig,
   history: DrawHistory,
   iterations: number
 ): { matches: Match[]; score: number } {
   let current = seed.slice();
-  let currentScore = scoreMatches(slotsToMatches(current, formats), lite, mode, config, history);
+  let currentScore = scoreMatches(slotsToMatches(current, formats), lite, mode, genderMode, config, history);
 
   for (let it = 0; it < iterations; it++) {
     const i = Math.floor(Math.random() * current.length);
@@ -181,7 +192,7 @@ function optimise(
     if (i === j) j = (j + 1) % current.length;
     const next = current.slice();
     [next[i], next[j]] = [next[j], next[i]];
-    const nextScore = scoreMatches(slotsToMatches(next, formats), lite, mode, config, history);
+    const nextScore = scoreMatches(slotsToMatches(next, formats), lite, mode, genderMode, config, history);
     if (nextScore <= currentScore) {
       current = next;
       currentScore = nextScore;
@@ -194,13 +205,14 @@ function optimise(
 export interface GenerateInput {
   active: PlayerLite[];
   mode: PairingMode;
+  genderMode: GenderMode;
   config: SessionConfig;
   history: DrawHistory;
   index: number;
 }
 
 /** Generate one round: select byes, then optimise the match assignment. */
-export function generateRound({ active, mode, config, history, index }: GenerateInput): Round {
+export function generateRound({ active, mode, genderMode, config, history, index }: GenerateInput): Round {
   const plan = planRound(active.length, config.courtCount);
   const byes = selectByes(active, plan.byeCount, history);
   const byeSet = new Set(byes);
@@ -208,7 +220,7 @@ export function generateRound({ active, mode, config, history, index }: Generate
   const lite = new Map(active.map((p) => [p.id, p] as const));
 
   if (totalSlots(plan.formats) !== playing.length || playing.length === 0) {
-    return { index, pairingMode: mode, matches: [], byes, locked: false };
+    return { index, pairingMode: mode, genderMode, matches: [], byes, locked: false };
   }
 
   const sorted = playing.slice().sort((a, b) => a.grade - b.grade);
@@ -216,11 +228,11 @@ export function generateRound({ active, mode, config, history, index }: Generate
 
   let best: { matches: Match[]; score: number } | null = null;
   for (const seed of seeds) {
-    const result = optimise(seed, plan.formats, lite, mode, config, history, 1200);
+    const result = optimise(seed, plan.formats, lite, mode, genderMode, config, history, 1200);
     if (!best || result.score < best.score) best = result;
   }
 
-  return { index, pairingMode: mode, matches: best!.matches, byes, locked: false };
+  return { index, pairingMode: mode, genderMode, matches: best!.matches, byes, locked: false };
 }
 
 /** Match evenness gap (average-grade difference) for display. */
