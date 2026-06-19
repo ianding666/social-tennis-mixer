@@ -215,6 +215,17 @@ export default function SessionView({ session, players, onChange, onAddPlayerToD
               onChange={(e) => setConfig({ roundMinutes: Math.max(5, Number(e.target.value) || 30) })}
             />
           </label>
+          <label className="small">
+            Total rounds{' '}
+            <input
+              type="number"
+              min={1}
+              max={20}
+              style={{ width: 64 }}
+              value={session.config.totalRounds}
+              onChange={(e) => setConfig({ totalRounds: Math.max(1, Number(e.target.value) || 1) })}
+            />
+          </label>
           <label
             className="small"
             title="Largest allowed difference between the two sides' average grades for a match to count as “even”. Lower = stricter (tighter matches); higher = more flexible. Draws show Δ in green when within this."
@@ -388,7 +399,7 @@ export default function SessionView({ session, players, onChange, onAddPlayerToD
       </div>
 
       {session.rounds.length === 0 ? (
-        <p className="empty">No rounds yet. Mark who's present and generate round 1.</p>
+        <p className="empty no-print">No rounds yet. Mark who's present and generate round 1.</p>
       ) : (
         session.rounds.map((round) => (
           <RoundCard
@@ -404,6 +415,14 @@ export default function SessionView({ session, players, onChange, onAddPlayerToD
           />
         ))
       )}
+
+      {Array.from({ length: Math.max(0, session.config.totalRounds - session.rounds.length) }, (_, i) => (
+        <PlaceholderRoundCard
+          key={`placeholder-${i}`}
+          roundNumber={session.rounds.length + i + 1}
+          courtCount={session.config.courtCount}
+        />
+      ))}
     </div>
   );
 }
@@ -437,7 +456,7 @@ function RoundCard({ round, grade, gender, name, tolerance, selected, onChip, on
   };
 
   return (
-    <div className="card">
+    <div className="card" style={{ '--court-count': round.matches.length } as React.CSSProperties}>
       <div className="row between">
         <h3>
           Round {round.index + 1}{' '}
@@ -455,7 +474,7 @@ function RoundCard({ round, grade, gender, name, tolerance, selected, onChip, on
       </div>
 
       {round.byes.length > 0 && (
-        <div style={{ marginTop: '0.6rem' }}>
+        <div className="no-print" style={{ marginTop: '0.6rem' }}>
           <span className="tag">Bye:</span> {round.byes.map((id) => chip(id))}
         </div>
       )}
@@ -490,6 +509,28 @@ function CourtCard({ match, grade, gender, tolerance, chip }: CourtCardProps) {
       <div className="vs">vs</div>
       <div className="side">{match.sideB.map((id) => chip(id))}</div>
       {mvw && <div className="flag">⚠ 2 men vs 2 women</div>}
+    </div>
+  );
+}
+
+function PlaceholderRoundCard({ roundNumber, courtCount }: { roundNumber: number; courtCount: number }) {
+  return (
+    <div className="card print-only" style={{ '--court-count': courtCount } as React.CSSProperties}>
+      <div className="row between">
+        <h3>Round {roundNumber}</h3>
+      </div>
+      <div className="courts">
+        {Array.from({ length: courtCount }, (_, i) => (
+          <div className="court" key={i}>
+            <h4>
+              <span>Court {i + 1} <span className="tag">Doubles</span></span>
+            </h4>
+            <div className="side placeholder-side" />
+            <div className="vs">vs</div>
+            <div className="side placeholder-side" />
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

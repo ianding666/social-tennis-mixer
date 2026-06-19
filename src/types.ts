@@ -45,6 +45,8 @@ export interface Round {
 export interface SessionConfig {
   courtCount: number;
   roundMinutes: number;
+  /** Total rounds to print (including ungenerated placeholder rounds). */
+  totalRounds: number;
   /** Max average-grade difference between two sides still considered "even". */
   evenTolerance: number;
   /** Balanced mode: max grade gap allowed between partners. */
@@ -66,6 +68,7 @@ export interface Session {
 export const DEFAULT_CONFIG: SessionConfig = {
   courtCount: 5,
   roundMinutes: 30,
+  totalRounds: 6,
   evenTolerance: 1.5,
   balancedPartnerGap: 2
 };

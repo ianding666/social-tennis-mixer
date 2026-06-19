@@ -156,14 +156,40 @@ th { font-size: 0.8rem; text-transform: uppercase; color: var(--muted); letter-s
 
 .errors { color: var(--danger); font-size: 0.85rem; }
 .empty { color: var(--muted); padding: 1rem 0; text-align: center; }
+.print-only { display: none; }
+.placeholder-side { min-height: 2rem; border-bottom: 1px dashed var(--border); }
 
 @media print {
+  @page { margin: 0.5cm; }
   .app-header, .no-print, button:not(.chip) { display: none !important; }
-  main { max-width: none; }
-  .card { border: none; padding: 0; }
-  .courts { grid-template-columns: repeat(3, 1fr); }
-  .court { break-inside: avoid; }
+  main { max-width: none; padding: 0; }
+  .card {
+    border: none;
+    padding: 0.75rem;
+    margin-bottom: 0;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+  }
+  .card h3 { margin: 0 0 0.5rem; }
+  .courts {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    gap: 0.5rem;
+  }
+  .court {
+    break-inside: avoid;
+    /* subtract total gap (n-1 gaps of 0.5rem) from available height before dividing */
+    height: calc((100vh - 3rem - (var(--court-count, 6) - 1) * 0.5rem) / var(--court-count, 6));
+    display: flex;
+    flex-direction: column;
+    justify-content: space-around;
+    border-top: 1px solid var(--border);
+    padding: 0.25rem 0.75rem;
+  }
   .card:not(:last-child) { break-after: page; page-break-after: always; }
+  .print-only { display: block; }
   .chip {
     border: none;
     background: transparent !important;
