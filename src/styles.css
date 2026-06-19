@@ -163,6 +163,7 @@ th { font-size: 0.8rem; text-transform: uppercase; color: var(--muted); letter-s
   .card { border: none; padding: 0; }
   .courts { grid-template-columns: repeat(3, 1fr); }
   .court { break-inside: avoid; }
+  .card:not(:last-child) { break-after: page; page-break-after: always; }
   .chip {
     border: none;
     background: transparent !important;
