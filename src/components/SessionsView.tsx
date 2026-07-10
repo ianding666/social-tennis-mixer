@@ -1,37 +1,39 @@
 import { useState } from 'react';
-import type { Session } from '../types';
+import type { Player, Session, SessionPlayer } from '../types';
 import { DEFAULT_CONFIG } from '../types';
 import { todayISO, uid } from '../util';
 
 interface Props {
   sessions: Session[];
+  players: Player[];
   onOpen: (id: string) => void;
   onCreate: (s: Session) => void;
   onRemove: (id: string) => void;
 }
 
-export default function SessionsView({ sessions, onOpen, onCreate, onRemove }: Props) {
+export default function SessionsView({ sessions, players, onOpen, onCreate, onRemove }: Props) {
   const [name, setName] = useState('');
   const [date, setDate] = useState(todayISO());
-  const [copyFromId, setCopyFromId] = useState('');
+  const [loadDirectory, setLoadDirectory] = useState(false);
 
   const create = () => {
     const trimmed = name.trim();
     if (!trimmed) return alert('Give the session a name.');
-    const source = sessions.find((s) => s.id === copyFromId);
-    const players = source ? source.players.map((p) => ({ ...p })) : [];
+    const roster: SessionPlayer[] = loadDirectory
+      ? players.map((p) => ({ playerId: p.id, name: p.name, grade: p.grade, gender: p.gender, phone: p.phone }))
+      : [];
     const session: Session = {
       id: uid(),
       name: trimmed,
       date,
-      config: source ? { ...source.config } : { ...DEFAULT_CONFIG },
-      players,
-      activePlayerIds: players.map((p) => p.playerId),
+      config: { ...DEFAULT_CONFIG },
+      players: roster,
+      activePlayerIds: [],
       rounds: []
     };
     onCreate(session);
     setName('');
-    setCopyFromId('');
+    setLoadDirectory(false);
     onOpen(session.id);
   };
 
@@ -51,18 +53,15 @@ export default function SessionsView({ sessions, onOpen, onCreate, onRemove }: P
             Create
           </button>
         </div>
-        {sessions.length > 0 && (
+        {players.length > 0 && (
           <div className="row" style={{ marginTop: '0.4rem' }}>
             <label className="small">
-              Load players from{' '}
-              <select value={copyFromId} onChange={(e) => setCopyFromId(e.target.value)}>
-                <option value="">Start empty</option>
-                {sessions.map((s) => (
-                  <option key={s.id} value={s.id}>
-                    {s.name} ({s.date}) — {s.players.length} player{s.players.length === 1 ? '' : 's'}
-                  </option>
-                ))}
-              </select>
+              <input
+                type="checkbox"
+                checked={loadDirectory}
+                onChange={(e) => setLoadDirectory(e.target.checked)}
+              />{' '}
+              Load all {players.length} player{players.length === 1 ? '' : 's'} from the directory
             </label>
           </div>
         )}

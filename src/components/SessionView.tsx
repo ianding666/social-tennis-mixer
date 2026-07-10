@@ -85,8 +85,7 @@ export default function SessionView({ session, players, onChange, onAddPlayerToD
   const addFromDirectory = (p: Player) => {
     const sp: SessionPlayer = { playerId: p.id, name: p.name, grade: p.grade, gender: p.gender, phone: p.phone };
     update({
-      players: [...session.players, sp],
-      activePlayerIds: [...session.activePlayerIds, p.id]
+      players: [...session.players, sp]
     });
   };
 

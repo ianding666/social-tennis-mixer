@@ -107,6 +107,7 @@ export default function App() {
         ) : (
           <SessionsView
             sessions={sessions}
+            players={players}
             onOpen={openSession}
             onCreate={upsertSession}
             onRemove={removeSession}
