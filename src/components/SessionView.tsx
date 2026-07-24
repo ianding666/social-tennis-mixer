@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import type { Gender, GenderMode, Match, PairingMode, Player, Round, Session, SessionPlayer } from '../types';
+import type { Gender, GenderMode, Match, MatchFormat, PairingMode, Player, Round, Session, SessionPlayer } from '../types';
 import { GRADE_MAX, GRADE_MIN } from '../types';
 import { deriveHistory, generateRound, isMenVsWomen, matchGap, planRound, type PlayerLite } from '../draw';
 import { uid } from '../util';
@@ -46,6 +46,62 @@ function swapInRound(round: Round, a: string, b: string): Round {
   };
 }
 
+/** Pull a player out of a round: they sit out (move to byes) and their court's format is recomputed. */
+function removeFromRound(round: Round, id: string): Round {
+  const byes = round.byes.filter((b) => b !== id);
+  const matches: Match[] = [];
+  for (const m of round.matches) {
+    if (!m.sideA.includes(id) && !m.sideB.includes(id)) {
+      matches.push(m);
+      continue;
+    }
+    const sideA = m.sideA.filter((x) => x !== id);
+    const sideB = m.sideB.filter((x) => x !== id);
+    // A side with no players has no opponent — dissolve the court, remaining players sit out too.
+    if (sideA.length === 0 || sideB.length === 0) {
+      byes.push(...sideA, ...sideB);
+      continue;
+    }
+    const format: MatchFormat =
+      sideA.length !== sideB.length ? 'uneven' : sideA.length === 1 ? 'singles' : 'doubles';
+    matches.push({ ...m, sideA, sideB, format });
+  }
+  return { ...round, matches, byes };
+}
+
+/** Place a bye player onto a court side (max 2 per side) and recompute that court's format. */
+function addToSide(round: Round, id: string, court: number, side: 'A' | 'B'): Round {
+  const target = round.matches.find((m) => m.court === court);
+  if (!target) return round;
+  const targetSide = side === 'A' ? target.sideA : target.sideB;
+  if (targetSide.length >= 2) return round;
+  const byes = round.byes.filter((b) => b !== id);
+  const matches = round.matches.map((m) => {
+    if (m.court !== court) return m;
+    const sideA = side === 'A' ? [...m.sideA, id] : m.sideA;
+    const sideB = side === 'B' ? [...m.sideB, id] : m.sideB;
+    const format: MatchFormat =
+      sideA.length !== sideB.length ? 'uneven' : sideA.length === 1 ? 'singles' : 'doubles';
+    return { ...m, sideA, sideB, format };
+  });
+  return { ...round, matches, byes };
+}
+
+/** Add players to the latest (unlocked) round's bye list, skipping anyone already in that round. */
+function addToLatestRoundByes(rounds: Round[], ids: string[]): Round[] {
+  if (rounds.length === 0) return rounds;
+  const i = rounds.length - 1;
+  const last = rounds[i];
+  if (last.locked) return rounds;
+  const inRound = new Set<string>([
+    ...last.byes,
+    ...last.matches.flatMap((m) => [...m.sideA, ...m.sideB])
+  ]);
+  const toAdd = ids.filter((id) => !inRound.has(id));
+  if (toAdd.length === 0) return rounds;
+  return rounds.map((r, idx) => (idx === i ? { ...r, byes: [...r.byes, ...toAdd] } : r));
+}
+
 export default function SessionView({ session, players, onChange, onAddPlayerToDirectory }: Props) {
   const [search, setSearch] = useState('');
   const [nextMode, setNextMode] = useState<PairingMode>('balanced');
@@ -85,7 +141,9 @@ export default function SessionView({ session, players, onChange, onAddPlayerToD
   const addFromDirectory = (p: Player) => {
     const sp: SessionPlayer = { playerId: p.id, name: p.name, grade: p.grade, gender: p.gender, phone: p.phone };
     update({
-      players: [...session.players, sp]
+      players: [...session.players, sp],
+      activePlayerIds: [...session.activePlayerIds, p.id],
+      rounds: addToLatestRoundByes(session.rounds, [p.id])
     });
   };
 
@@ -96,16 +154,24 @@ export default function SessionView({ session, players, onChange, onAddPlayerToD
     if (!Number.isFinite(g) || g < GRADE_MIN || g > GRADE_MAX) return alert(`Grade D${GRADE_MIN}–D${GRADE_MAX}.`);
     const player: Player = { id: uid(), name: nm, grade: g, gender: walkin.gender, phone: walkin.phone.trim() };
     onAddPlayerToDirectory(player);
-    addFromDirectory(player);
+    const sp: SessionPlayer = { playerId: player.id, name: player.name, grade: player.grade, gender: player.gender, phone: player.phone };
+    update({
+      players: [...session.players, sp],
+      activePlayerIds: [...session.activePlayerIds, player.id],
+      rounds: addToLatestRoundByes(session.rounds, [player.id])
+    });
     setWalkin({ name: '', grade: '6', gender: 'M', phone: '' });
   };
 
   const togglePresent = (id: string) => {
-    update({
-      activePlayerIds: activeSet.has(id)
-        ? session.activePlayerIds.filter((x) => x !== id)
-        : [...session.activePlayerIds, id]
-    });
+    if (activeSet.has(id)) {
+      update({ activePlayerIds: session.activePlayerIds.filter((x) => x !== id) });
+    } else {
+      update({
+        activePlayerIds: [...session.activePlayerIds, id],
+        rounds: addToLatestRoundByes(session.rounds, [id])
+      });
+    }
   };
 
   const removeFromSession = (id: string) => {
@@ -177,6 +243,18 @@ export default function SessionView({ session, players, onChange, onAddPlayerToD
       return;
     }
     const newRound = swapInRound(session.rounds[roundIndex], selected.id, id);
+    update({ rounds: session.rounds.map((r, idx) => (idx === roundIndex ? newRound : r)) });
+    setSelected(null);
+  };
+
+  const onRemoveFromRound = (roundIndex: number, id: string) => {
+    const newRound = removeFromRound(session.rounds[roundIndex], id);
+    update({ rounds: session.rounds.map((r, idx) => (idx === roundIndex ? newRound : r)) });
+    if (selected?.round === roundIndex && selected.id === id) setSelected(null);
+  };
+
+  const onAddToSide = (roundIndex: number, id: string, court: number, side: 'A' | 'B') => {
+    const newRound = addToSide(session.rounds[roundIndex], id, court, side);
     update({ rounds: session.rounds.map((r, idx) => (idx === roundIndex ? newRound : r)) });
     setSelected(null);
   };
@@ -423,6 +501,8 @@ export default function SessionView({ session, players, onChange, onAddPlayerToD
             tolerance={session.config.evenTolerance}
             selected={selected}
             onChip={onChipClick}
+            onRemove={onRemoveFromRound}
+            onAddToSide={onAddToSide}
             onToggleLock={() => toggleLock(round.index)}
           />
         ))
@@ -447,10 +527,12 @@ interface RoundCardProps {
   tolerance: number;
   selected: { round: number; id: string } | null;
   onChip: (roundIndex: number, id: string, locked: boolean) => void;
+  onRemove: (roundIndex: number, id: string) => void;
+  onAddToSide: (roundIndex: number, id: string, court: number, side: 'A' | 'B') => void;
   onToggleLock: () => void;
 }
 
-function RoundCard({ round, grade, gender, name, tolerance, selected, onChip, onToggleLock }: RoundCardProps) {
+function RoundCard({ round, grade, gender, name, tolerance, selected, onChip, onRemove, onAddToSide, onToggleLock }: RoundCardProps) {
   const chip = (id: string) => {
     const isSel = selected?.round === round.index && selected.id === id;
     return (
@@ -463,9 +545,29 @@ function RoundCard({ round, grade, gender, name, tolerance, selected, onChip, on
         <span className="nm">{name(id)}</span>
         <span className="badge grade">D{grade(id)}</span>
         <span className={`badge ${gender(id).toLowerCase()}`}>{gender(id)}</span>
+        {!round.locked && (
+          <span
+            className="chip-x no-print"
+            role="button"
+            aria-label={`Remove ${name(id)} from round`}
+            title="Remove from round"
+            onClick={(e) => {
+              e.stopPropagation();
+              onRemove(round.index, id);
+            }}
+          >
+            ×
+          </span>
+        )}
       </button>
     );
   };
+
+  // When a bye player is selected in this round, court sides offer to take them.
+  const addTargetId =
+    selected && selected.round === round.index && !round.locked && round.byes.includes(selected.id)
+      ? selected.id
+      : null;
 
   return (
     <div className="card" style={{ '--court-count': round.matches.length } as React.CSSProperties}>
@@ -482,13 +584,27 @@ function RoundCard({ round, grade, gender, name, tolerance, selected, onChip, on
 
       <div className="courts">
         {round.matches.map((m) => (
-          <CourtCard key={m.court} match={m} grade={grade} gender={gender} tolerance={tolerance} chip={chip} />
+          <CourtCard
+            key={m.court}
+            match={m}
+            grade={grade}
+            gender={gender}
+            tolerance={tolerance}
+            chip={chip}
+            addTargetId={addTargetId}
+            onAdd={(court, side) => addTargetId && onAddToSide(round.index, addTargetId, court, side)}
+          />
         ))}
       </div>
 
       {round.byes.length > 0 && (
         <div className="no-print" style={{ marginTop: '0.6rem' }}>
           <span className="tag">Bye:</span> {round.byes.map((id) => chip(id))}
+          {addTargetId && (
+            <span className="small muted" style={{ marginLeft: '0.4rem' }}>
+              — pick a court's “＋ Add here” to place {name(addTargetId)}.
+            </span>
+          )}
         </div>
       )}
     </div>
@@ -501,13 +617,23 @@ interface CourtCardProps {
   gender: (id: string) => Gender;
   tolerance: number;
   chip: (id: string) => React.ReactNode;
+  addTargetId: string | null;
+  onAdd: (court: number, side: 'A' | 'B') => void;
 }
 
-function CourtCard({ match, grade, gender, tolerance, chip }: CourtCardProps) {
+function CourtCard({ match, grade, gender, tolerance, chip, addTargetId, onAdd }: CourtCardProps) {
   const gap = matchGap(match, grade);
   const even = gap <= tolerance;
   const mvw = isMenVsWomen(match, gender);
   const label = match.format === 'doubles' ? 'Doubles' : match.format === 'singles' ? 'Singles' : 'Uneven 1v2';
+  const addBtn = (side: 'A' | 'B') => {
+    const full = (side === 'A' ? match.sideA : match.sideB).length >= 2;
+    return addTargetId && !full ? (
+      <button className="add-here no-print" onClick={() => onAdd(match.court, side)}>
+        ＋ Add here
+      </button>
+    ) : null;
+  };
   return (
     <div className="court">
       <h4>
@@ -518,9 +644,9 @@ function CourtCard({ match, grade, gender, tolerance, chip }: CourtCardProps) {
           Δ{gap.toFixed(1)}
         </span>
       </h4>
-      <div className="side">{match.sideA.map((id) => chip(id))}</div>
+      <div className="side">{match.sideA.map((id) => chip(id))}{addBtn('A')}</div>
       <div className="vs">vs</div>
-      <div className="side">{match.sideB.map((id) => chip(id))}</div>
+      <div className="side">{match.sideB.map((id) => chip(id))}{addBtn('B')}</div>
       {mvw && <div className="flag">⚠ 2 men vs 2 women</div>}
     </div>
   );

@@ -135,6 +135,31 @@ th { font-size: 0.8rem; text-transform: uppercase; color: var(--muted); letter-s
 .chip:hover { border-color: var(--green); }
 .chip.selected { border-color: var(--green); background: var(--accent); }
 .chip .nm { flex: 1; }
+.chip-x {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.15rem;
+  height: 1.15rem;
+  border-radius: 4px;
+  color: var(--muted);
+  font-size: 1rem;
+  line-height: 1;
+  cursor: pointer;
+}
+.chip-x:hover { color: #fff; background: var(--danger); }
+.add-here {
+  width: 100%;
+  margin: 0.12rem 0;
+  padding: 0.3rem 0.5rem;
+  border-radius: 8px;
+  border: 1px dashed var(--green);
+  background: var(--accent);
+  color: var(--green);
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+.add-here:hover { background: var(--green); color: #fff; }
 
 .gap-ok { color: var(--green); }
 .gap-warn { color: var(--warn); }
