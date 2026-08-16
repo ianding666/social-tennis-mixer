@@ -285,17 +285,6 @@ export default function SessionView({ session, players, onChange, onAddPlayerToD
             />
           </label>
           <label className="small">
-            Round mins{' '}
-            <input
-              type="number"
-              min={5}
-              max={120}
-              style={{ width: 64 }}
-              value={session.config.roundMinutes}
-              onChange={(e) => setConfig({ roundMinutes: Math.max(5, Number(e.target.value) || 30) })}
-            />
-          </label>
-          <label className="small">
             Total rounds{' '}
             <input
               type="number"
@@ -404,51 +393,53 @@ export default function SessionView({ session, players, onChange, onAddPlayerToD
         </details>
 
         {sortedRoster.length > 0 && (
-          <table style={{ marginTop: '0.6rem' }}>
-            <thead>
-              <tr>
-                <th>Present</th>
-                <th>Name</th>
-                <th>Grade</th>
-                <th>Gender</th>
-                <th>Played</th>
-                <th />
-              </tr>
-            </thead>
-            <tbody>
-              {sortedRoster.map((p) => (
-                <tr key={p.playerId} style={{ opacity: activeSet.has(p.playerId) ? 1 : 0.5 }}>
-                  <td>
-                    <input
-                      type="checkbox"
-                      checked={activeSet.has(p.playerId)}
-                      onChange={() => togglePresent(p.playerId)}
-                    />
-                  </td>
-                  <td>{p.name}</td>
-                  <td>
-                    <input
-                      type="number"
-                      min={GRADE_MIN}
-                      max={GRADE_MAX}
-                      style={{ width: 60 }}
-                      value={p.grade}
-                      onChange={(e) => setSessionGrade(p.playerId, Number(e.target.value) || p.grade)}
-                    />
-                  </td>
-                  <td>
-                    <span className={`badge ${p.gender.toLowerCase()}`}>{p.gender === 'M' ? 'Male' : 'Female'}</span>
-                  </td>
-                  <td>{playedCount.get(p.playerId) ?? 0}</td>
-                  <td>
-                    <button className="ghost danger" onClick={() => removeFromSession(p.playerId)}>
-                      Remove
-                    </button>
-                  </td>
+          <div className="scroll-list" style={{ marginTop: '0.6rem' }}>
+            <table>
+              <thead>
+                <tr>
+                  <th>Present</th>
+                  <th>Name</th>
+                  <th>Grade</th>
+                  <th>Gender</th>
+                  <th>Played</th>
+                  <th />
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {sortedRoster.map((p) => (
+                  <tr key={p.playerId} style={{ opacity: activeSet.has(p.playerId) ? 1 : 0.5 }}>
+                    <td>
+                      <input
+                        type="checkbox"
+                        checked={activeSet.has(p.playerId)}
+                        onChange={() => togglePresent(p.playerId)}
+                      />
+                    </td>
+                    <td>{p.name}</td>
+                    <td>
+                      <input
+                        type="number"
+                        min={GRADE_MIN}
+                        max={GRADE_MAX}
+                        style={{ width: 60 }}
+                        value={p.grade}
+                        onChange={(e) => setSessionGrade(p.playerId, Number(e.target.value) || p.grade)}
+                      />
+                    </td>
+                    <td>
+                      <span className={`badge ${p.gender.toLowerCase()}`}>{p.gender === 'M' ? 'Male' : 'Female'}</span>
+                    </td>
+                    <td>{playedCount.get(p.playerId) ?? 0}</td>
+                    <td>
+                      <button className="ghost danger" onClick={() => removeFromSession(p.playerId)}>
+                        Remove
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </div>
 

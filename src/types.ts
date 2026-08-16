@@ -6,10 +6,20 @@ export interface Player {
   name: string;
   /** Tennis Seniors division 2–12, lower = stronger. Used directly for matching. */
   grade: number;
+  /** World Tennis Number, 40.0–1.0, lower = stronger. Reference only — the draw uses grade. */
+  wtn?: number;
   gender: Gender;
   phone?: string;
   club?: string;
   notes?: string;
+  /** Id from the club system this player was imported from, if any. */
+  extId?: string;
+  /** Grade was defaulted on import and has not been confirmed yet. */
+  needsGrade?: boolean;
+  /** Gender was defaulted on import and has not been confirmed yet. */
+  needsGender?: boolean;
+  /** WTN was defaulted because the portal had no match, and is not confirmed. */
+  needsWtn?: boolean;
 }
 
 /** A player as captured into a Session — a snapshot taken when added. */
@@ -49,7 +59,6 @@ export interface Round {
 
 export interface SessionConfig {
   courtCount: number;
-  roundMinutes: number;
   /** Total rounds to print (including ungenerated placeholder rounds). */
   totalRounds: number;
   /** Max average-grade difference between two sides still considered "even". */
@@ -72,7 +81,6 @@ export interface Session {
 
 export const DEFAULT_CONFIG: SessionConfig = {
   courtCount: 5,
-  roundMinutes: 30,
   totalRounds: 6,
   evenTolerance: 1.5,
   balancedPartnerGap: 2
@@ -80,3 +88,6 @@ export const DEFAULT_CONFIG: SessionConfig = {
 
 export const GRADE_MIN = 1;
 export const GRADE_MAX = 12;
+
+export const WTN_MIN = 1;
+export const WTN_MAX = 40;
