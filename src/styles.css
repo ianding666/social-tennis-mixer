@@ -127,6 +127,44 @@ th { font-size: 0.8rem; text-transform: uppercase; color: var(--muted); letter-s
 /* Imported value that nobody has confirmed yet. */
 .badge.unconfirmed { background: #fff4e0; color: #96601a; border: 1px dashed #d9a441; }
 
+/* One control strip per round: labelled fields on the left, actions on the right. */
+.settings-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 0.5rem 0.9rem;
+  padding: 0.6rem 0.7rem;
+  margin-bottom: 0.8rem;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: #f8faf8;
+}
+.settings-bar .grow { min-width: 0; }
+.bar-actions { display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap; }
+
+.field { display: flex; flex-direction: column; gap: 0.2rem; }
+.field-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.field-note {
+  padding: 0.05rem 0.3rem;
+  border-radius: 999px;
+  background: #eef2ee;
+  text-transform: none;
+  letter-spacing: 0;
+}
+.field select, .field input { padding: 0.35rem 0.5rem; }
+.field select { cursor: pointer; }
+.field input[type='number'] { width: 6.5rem; cursor: auto; }
+.field select:disabled, .field input:disabled { opacity: 0.55; background: #f1f3f1; cursor: not-allowed; }
+
 .courts { display: grid; gap: 0.8rem; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); }
 .court {
   border: 1px solid var(--border);
@@ -247,6 +285,7 @@ th { font-size: 0.8rem; text-transform: uppercase; color: var(--muted); letter-s
   }
   .card:not(:last-child) { break-after: page; page-break-after: always; }
   .print-only { display: block; }
+  .print-only.inline { display: inline; }
   .chip {
     border: none;
     background: transparent !important;

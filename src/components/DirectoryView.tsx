@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import type { Gender, Player } from '../types';
-import { GRADE_MAX, GRADE_MIN, WTN_MAX, WTN_MIN } from '../types';
+import { GRADE_MAX, GRADE_MIN, WTN_DEFAULT, WTN_MAX, WTN_MIN } from '../types';
 import { uid } from '../util';
 import type { ParsedPlayer } from '../csv';
 import { parsePlayers, playersToCsv, rowsToText } from '../csv';
@@ -19,8 +19,8 @@ const blankForm = { id: '', name: '', grade: '6', wtn: '', gender: 'M' as Gender
  *  starting point. Rows that use it are flagged until someone confirms them. */
 const DEFAULT_IMPORT_GRADE = 10;
 const DEFAULT_IMPORT_GENDER: Gender = 'M';
-/** Placeholder for a player the WTN portal has no match for. */
-const DEFAULT_WTN = 30;
+/** Placeholder for a player the WTN portal has no match for — shared with the draw. */
+const DEFAULT_WTN = WTN_DEFAULT;
 
 const normName = (s: string) => s.trim().toLowerCase().replace(/\s+/g, ' ');
 const phoneDigits = (s: string | undefined) => (s ?? '').replace(/\D/g, '');

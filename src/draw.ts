@@ -1,10 +1,63 @@
-import type { GenderMode, Match, MatchFormat, PairingMode, Round, SessionConfig } from './types';
+import type { Match, MatchFormat, RatingMode, Round, RoundSettings, SessionConfig } from './types';
+import { DEFAULT_CONFIG, WTN_DEFAULT } from './types';
 import { shuffle } from './util';
 
 export interface PlayerLite {
   id: string;
   grade: number;
+  /** Only used when the round's RatingMode is 'wtn'. */
+  wtn?: number;
   gender: 'M' | 'F';
+}
+
+/**
+ * The number a round is balanced on. Grade and WTN both run low = stronger, so
+ * every comparison below is unchanged between the two — only the scale differs.
+ * A player with no WTN falls back to the placeholder rather than to their grade:
+ * a grade of 10 read as a WTN would look like a near-elite player.
+ */
+export function ratingOf(p: PlayerLite, ratingMode: RatingMode): number {
+  return ratingMode === 'wtn' ? p.wtn ?? WTN_DEFAULT : p.grade;
+}
+
+export interface Tolerances {
+  evenTolerance: number;
+  partnerGap: number;
+}
+
+/**
+ * The session's starting tolerances for a scale — they are not interchangeable
+ * between scales. Sessions saved before the WTN fields existed have them
+ * undefined, and an undefined tolerance would turn every penalty into NaN, so
+ * fall back here.
+ */
+export function ratingTolerances(config: SessionConfig, ratingMode: RatingMode): Tolerances {
+  return ratingMode === 'wtn'
+    ? {
+        evenTolerance: config.wtnEvenTolerance ?? DEFAULT_CONFIG.wtnEvenTolerance,
+        partnerGap: config.wtnBalancedPartnerGap ?? DEFAULT_CONFIG.wtnBalancedPartnerGap
+      }
+    : {
+        evenTolerance: config.evenTolerance ?? DEFAULT_CONFIG.evenTolerance,
+        partnerGap: config.balancedPartnerGap ?? DEFAULT_CONFIG.balancedPartnerGap
+      };
+}
+
+/**
+ * A stored round's settings, resolved for display and redraws. Each field a
+ * round predates falls back to the session default for that round's scale.
+ */
+export function roundSettings(round: Round, config: SessionConfig): RoundSettings {
+  const ratingMode = round.ratingMode ?? 'grade';
+  const fallback = ratingTolerances(config, ratingMode);
+  return {
+    courtCount: round.courtCount ?? config.courtCount ?? DEFAULT_CONFIG.courtCount,
+    pairingMode: round.pairingMode,
+    genderMode: round.genderMode ?? 'same',
+    ratingMode,
+    evenTolerance: round.evenTolerance ?? fallback.evenTolerance,
+    partnerGap: round.partnerGap ?? fallback.partnerGap
+  };
 }
 
 export interface DrawHistory {
@@ -85,12 +138,12 @@ const W_GENDER = 60;
 const W_PARTNER = 12;
 const W_OPPONENT = 1.5;
 
-function avg(grades: number[]): number {
-  return grades.reduce((s, g) => s + g, 0) / grades.length;
+function avg(ratings: number[]): number {
+  return ratings.reduce((s, g) => s + g, 0) / ratings.length;
 }
 
-/** Turn an ordered slot array into matches, canonicalising odd formats by grade. */
-function slotsToMatches(slots: PlayerLite[], formats: MatchFormat[]): Match[] {
+/** Turn an ordered slot array into matches, canonicalising odd formats by rating. */
+function slotsToMatches(slots: PlayerLite[], formats: MatchFormat[], ratingMode: RatingMode): Match[] {
   const matches: Match[] = [];
   let i = 0;
   formats.forEach((format, court) => {
@@ -103,8 +156,10 @@ function slotsToMatches(slots: PlayerLite[], formats: MatchFormat[]): Match[] {
       matches.push({ court: court + 1, format, sideA: [g[0].id], sideB: [g[1].id] });
       i += 2;
     } else {
-      // uneven: strongest (lowest grade) plays alone
-      const g = slots.slice(i, i + 3).sort((a, b) => a.grade - b.grade);
+      // uneven: strongest (lowest rating) plays alone
+      const g = slots
+        .slice(i, i + 3)
+        .sort((a, b) => ratingOf(a, ratingMode) - ratingOf(b, ratingMode));
       matches.push({ court: court + 1, format, sideA: [g[0].id], sideB: [g[1].id, g[2].id] });
       i += 3;
     }
@@ -115,20 +170,19 @@ function slotsToMatches(slots: PlayerLite[], formats: MatchFormat[]): Match[] {
 function scoreMatches(
   matches: Match[],
   lite: Map<string, PlayerLite>,
-  mode: PairingMode,
-  genderMode: GenderMode,
-  config: SessionConfig,
+  settings: RoundSettings,
   history: DrawHistory
 ): number {
-  const grade = (id: string) => lite.get(id)!.grade;
+  const { pairingMode: mode, genderMode, ratingMode } = settings;
+  const rating = (id: string) => ratingOf(lite.get(id)!, ratingMode);
   const gender = (id: string) => lite.get(id)!.gender;
   let penalty = 0;
 
   for (const m of matches) {
-    const avgA = avg(m.sideA.map(grade));
-    const avgB = avg(m.sideB.map(grade));
+    const avgA = avg(m.sideA.map(rating));
+    const avgB = avg(m.sideB.map(rating));
     const gap = Math.abs(avgA - avgB);
-    penalty += W_EVEN * Math.max(0, gap - config.evenTolerance) ** 2;
+    penalty += W_EVEN * Math.max(0, gap - settings.evenTolerance) ** 2;
     penalty += W_EVEN_SOFT * gap;
 
     // Gender Mode: prefer the chosen composition of each Pair.
@@ -151,9 +205,9 @@ function scoreMatches(
 
     for (const side of [m.sideA, m.sideB]) {
       if (side.length === 2) {
-        const partnerGap = Math.abs(grade(side[0]) - grade(side[1]));
+        const partnerGap = Math.abs(rating(side[0]) - rating(side[1]));
         if (mode === 'balanced') {
-          penalty += W_MODE_BALANCED * Math.max(0, partnerGap - config.balancedPartnerGap);
+          penalty += W_MODE_BALANCED * Math.max(0, partnerGap - settings.partnerGap);
         } else {
           penalty -= W_MODE_MIXED * partnerGap; // reward spread
         }
@@ -177,14 +231,15 @@ function optimise(
   seed: PlayerLite[],
   formats: MatchFormat[],
   lite: Map<string, PlayerLite>,
-  mode: PairingMode,
-  genderMode: GenderMode,
-  config: SessionConfig,
+  settings: RoundSettings,
   history: DrawHistory,
   iterations: number
 ): { matches: Match[]; score: number } {
+  const score = (order: PlayerLite[]) =>
+    scoreMatches(slotsToMatches(order, formats, settings.ratingMode), lite, settings, history);
+
   let current = seed.slice();
-  let currentScore = scoreMatches(slotsToMatches(current, formats), lite, mode, genderMode, config, history);
+  let currentScore = score(current);
 
   for (let it = 0; it < iterations; it++) {
     const i = Math.floor(Math.random() * current.length);
@@ -192,53 +247,56 @@ function optimise(
     if (i === j) j = (j + 1) % current.length;
     const next = current.slice();
     [next[i], next[j]] = [next[j], next[i]];
-    const nextScore = scoreMatches(slotsToMatches(next, formats), lite, mode, genderMode, config, history);
+    const nextScore = score(next);
     if (nextScore <= currentScore) {
       current = next;
       currentScore = nextScore;
     }
   }
 
-  return { matches: slotsToMatches(current, formats), score: currentScore };
+  return { matches: slotsToMatches(current, formats, settings.ratingMode), score: currentScore };
 }
 
 export interface GenerateInput {
   active: PlayerLite[];
-  mode: PairingMode;
-  genderMode: GenderMode;
-  config: SessionConfig;
+  /** Includes the court count this round is drawn on. */
+  settings: RoundSettings;
   history: DrawHistory;
   index: number;
 }
 
 /** Generate one round: select byes, then optimise the match assignment. */
-export function generateRound({ active, mode, genderMode, config, history, index }: GenerateInput): Round {
-  const plan = planRound(active.length, config.courtCount);
+export function generateRound({ active, settings, history, index }: GenerateInput): Round {
+  const plan = planRound(active.length, settings.courtCount);
   const byes = selectByes(active, plan.byeCount, history);
   const byeSet = new Set(byes);
   const playing = active.filter((p) => !byeSet.has(p.id));
   const lite = new Map(active.map((p) => [p.id, p] as const));
+  // The settings are stamped onto the round so it stays readable — and
+  // redrawable — even after the session defaults or a later round change.
+  const base = { index, ...settings, byes, locked: false };
 
   if (totalSlots(plan.formats) !== playing.length || playing.length === 0) {
-    return { index, pairingMode: mode, genderMode, matches: [], byes, locked: false };
+    return { ...base, matches: [] };
   }
 
-  const sorted = playing.slice().sort((a, b) => a.grade - b.grade);
+  const ratingMode = settings.ratingMode;
+  const sorted = playing.slice().sort((a, b) => ratingOf(a, ratingMode) - ratingOf(b, ratingMode));
   const seeds: PlayerLite[][] = [sorted, shuffle(playing), shuffle(playing)];
 
   let best: { matches: Match[]; score: number } | null = null;
   for (const seed of seeds) {
-    const result = optimise(seed, plan.formats, lite, mode, genderMode, config, history, 1200);
+    const result = optimise(seed, plan.formats, lite, settings, history, 1200);
     if (!best || result.score < best.score) best = result;
   }
 
-  return { index, pairingMode: mode, genderMode, matches: best!.matches, byes, locked: false };
+  return { ...base, matches: best!.matches };
 }
 
-/** Match evenness gap (average-grade difference) for display. */
-export function matchGap(match: Match, grade: (id: string) => number): number {
-  const a = avg(match.sideA.map(grade));
-  const b = avg(match.sideB.map(grade));
+/** Match evenness gap (difference of side averages) for display. */
+export function matchGap(match: Match, rating: (id: string) => number): number {
+  const a = avg(match.sideA.map(rating));
+  const b = avg(match.sideB.map(rating));
   return Math.abs(a - b);
 }
 

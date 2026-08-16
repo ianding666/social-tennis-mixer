@@ -1,7 +1,16 @@
 import { useMemo, useState } from 'react';
-import type { Gender, GenderMode, Match, MatchFormat, PairingMode, Player, Round, Session, SessionPlayer } from '../types';
-import { GRADE_MAX, GRADE_MIN } from '../types';
-import { deriveHistory, generateRound, isMenVsWomen, matchGap, planRound, type PlayerLite } from '../draw';
+import type { Gender, GenderMode, Match, MatchFormat, PairingMode, Player, RatingMode, Round, RoundSettings, Session, SessionPlayer } from '../types';
+import { GRADE_MAX, GRADE_MIN, WTN_DEFAULT, WTN_MAX, WTN_MIN } from '../types';
+import {
+  deriveHistory,
+  generateRound,
+  isMenVsWomen,
+  matchGap,
+  planRound,
+  ratingTolerances,
+  roundSettings,
+  type PlayerLite
+} from '../draw';
 import { uid } from '../util';
 
 interface Props {
@@ -30,6 +39,132 @@ function InfoIcon() {
       <line x1="12" y1="16" x2="12" y2="12" />
       <line x1="12" y1="8" x2="12.01" y2="8" />
     </svg>
+  );
+}
+
+interface FieldProps {
+  label: string;
+  /** Hover explanation; also puts an info mark next to the label. */
+  hint?: string;
+  /** Flags a field the current settings ignore, without taking the control away. */
+  note?: string;
+  children: React.ReactNode;
+}
+
+/** One labelled control in a settings bar. */
+function Field({ label, hint, note, children }: FieldProps) {
+  return (
+    <label className="field" title={hint}>
+      <span className="field-label">
+        {label}
+        {hint && <InfoIcon />}
+        {note && <span className="field-note">{note}</span>}
+      </span>
+      {children}
+    </label>
+  );
+}
+
+interface SettingsFieldsProps {
+  value: RoundSettings;
+  /** Locked rounds show their settings but cannot be edited. */
+  disabled?: boolean;
+  onChange: (patch: Partial<RoundSettings>) => void;
+}
+
+/**
+ * The five draw settings of one round, shared by the next-round bar and every
+ * generated round so both read the same way.
+ */
+function SettingsFields({ value, disabled, onChange }: SettingsFieldsProps) {
+  const wtn = value.ratingMode === 'wtn';
+  const unit = wtn ? 'WTN' : 'grade';
+  const num = (raw: string) => Math.max(0, Number(raw) || 0);
+  return (
+    <>
+      <Field
+        label="Courts"
+        hint="Courts available for this round. Fewer courts than the roster fills means more byes; a spare court absorbs leftovers as a singles or an uneven 1v2."
+      >
+        <input
+          type="number"
+          min={1}
+          max={20}
+          disabled={disabled}
+          value={value.courtCount}
+          onChange={(e) => onChange({ courtCount: Math.max(1, Number(e.target.value) || 1) })}
+        />
+      </Field>
+
+      <Field label="Pairing">
+        <select
+          disabled={disabled}
+          value={value.pairingMode}
+          onChange={(e) => onChange({ pairingMode: e.target.value as PairingMode })}
+        >
+          <option value="balanced">Balanced — similar</option>
+          <option value="mixed">Mixed — strong + weak</option>
+        </select>
+      </Field>
+
+      <Field label="Gender">
+        <select
+          disabled={disabled}
+          value={value.genderMode}
+          onChange={(e) => onChange({ genderMode: e.target.value as GenderMode })}
+        >
+          <option value="same">Same gender</option>
+          <option value="mixed">Mixed gender</option>
+        </select>
+      </Field>
+
+      <Field
+        label="Rate by"
+        hint="Which number the draw balances on. Both run low = stronger; only the spread differs, so each scale carries its own tolerances."
+      >
+        <select
+          disabled={disabled}
+          value={value.ratingMode}
+          onChange={(e) => onChange({ ratingMode: e.target.value as RatingMode })}
+        >
+          <option value="grade">Grade (D1–D12)</option>
+          <option value="wtn">WTN (1–40)</option>
+        </select>
+      </Field>
+
+      <Field
+        label={`Even Δ ≤ (${unit})`}
+        hint="Largest allowed difference between the two sides' averages for a match to count as “even”. Lower = stricter (tighter matches); higher = more flexible. Each court shows Δ in green when within this."
+      >
+        <input
+          type="number"
+          step={0.5}
+          min={0}
+          max={wtn ? 15 : 6}
+          disabled={disabled}
+          value={value.evenTolerance}
+          onChange={(e) => onChange({ evenTolerance: num(e.target.value) })}
+        />
+      </Field>
+
+      <Field
+        // Mixed pairing ignores the number rather than clamping to it, so the field
+        // stays editable — you can dial it in before switching back to Balanced.
+        label={`Partner gap ≤ (${unit})`}
+        note={value.pairingMode === 'balanced' ? undefined : 'Balanced only'}
+        hint="Balanced pairing only: largest gap allowed between two partners on the same side. Lower = partners must be closer. Mixed pairing ignores it."
+      >
+        <input
+          type="number"
+          step={wtn ? 0.5 : 1}
+          min={0}
+          max={wtn ? 20 : 10}
+          disabled={disabled}
+          value={value.partnerGap}
+          onChange={(e) => onChange({ partnerGap: num(e.target.value) })}
+        />
+      </Field>
+    </>
   );
 }
 
@@ -106,6 +241,9 @@ export default function SessionView({ session, players, onChange, onAddPlayerToD
   const [search, setSearch] = useState('');
   const [nextMode, setNextMode] = useState<PairingMode>('balanced');
   const [nextGenderMode, setNextGenderMode] = useState<GenderMode>('same');
+  // WTN is the finer scale, so it is the default to draw on; a round falls back
+  // to grade only when a player has no WTN, or when the organiser picks grade.
+  const [nextRatingMode, setNextRatingMode] = useState<RatingMode>('wtn');
   const [selected, setSelected] = useState<{ round: number; id: string } | null>(null);
   const [walkin, setWalkin] = useState({ name: '', grade: '6', gender: 'M' as Gender, phone: '' });
 
@@ -115,14 +253,34 @@ export default function SessionView({ session, players, onChange, onAddPlayerToD
     return m;
   }, [session.players]);
 
-  const grade = (id: string) => playerById.get(id)?.grade ?? 0;
   const gender = (id: string) => (playerById.get(id)?.gender ?? 'M') as Gender;
   const name = (id: string) => playerById.get(id)?.name ?? '?';
+
+  /** The number a round was drawn on, for that round's own rating mode. */
+  const ratingFor = (mode: RatingMode) => (id: string) => {
+    const p = playerById.get(id);
+    if (!p) return 0;
+    return mode === 'wtn' ? p.wtn ?? WTN_DEFAULT : p.grade;
+  };
 
   const activeSet = useMemo(() => new Set(session.activePlayerIds), [session.activePlayerIds]);
   const activeLite: PlayerLite[] = session.players
     .filter((p) => activeSet.has(p.playerId))
-    .map((p) => ({ id: p.playerId, grade: p.grade, gender: p.gender }));
+    .map((p) => ({ id: p.playerId, grade: p.grade, wtn: p.wtn, gender: p.gender }));
+
+  /** Present players the WTN draw would have to guess a number for. */
+  const missingWtn = activeLite.filter((p) => p.wtn === undefined).length;
+
+  // Settings the next round will be generated with. The tolerances live on the
+  // session so they carry over as the starting point for each new round; the
+  // fallback keeps sessions saved before the WTN fields on controlled inputs.
+  const nextSettings: RoundSettings = {
+    courtCount: session.config.courtCount,
+    pairingMode: nextMode,
+    genderMode: nextGenderMode,
+    ratingMode: nextRatingMode,
+    ...ratingTolerances(session.config, nextRatingMode)
+  };
 
   const playedCount = useMemo(() => deriveHistory(session.rounds).playedCount, [session.rounds]);
 
@@ -139,7 +297,7 @@ export default function SessionView({ session, players, onChange, onAddPlayerToD
   const update = (patch: Partial<Session>) => onChange({ ...session, ...patch });
 
   const addFromDirectory = (p: Player) => {
-    const sp: SessionPlayer = { playerId: p.id, name: p.name, grade: p.grade, gender: p.gender, phone: p.phone };
+    const sp: SessionPlayer = { playerId: p.id, name: p.name, grade: p.grade, wtn: p.wtn, gender: p.gender, phone: p.phone };
     update({
       players: [...session.players, sp],
       activePlayerIds: [...session.activePlayerIds, p.id],
@@ -187,43 +345,80 @@ export default function SessionView({ session, players, onChange, onAddPlayerToD
     });
   };
 
+  /** Session-local edit, like grade — it does not write back to the directory. */
+  const setSessionWtn = (id: string, raw: string) => {
+    const value = raw.trim() ? Number(raw) : undefined;
+    if (value !== undefined && (!Number.isFinite(value) || value < WTN_MIN || value > WTN_MAX)) return;
+    update({
+      players: session.players.map((p) => (p.playerId === id ? { ...p, wtn: value } : p))
+    });
+  };
+
   const setConfig = (patch: Partial<Session['config']>) =>
     update({ config: { ...session.config, ...patch } });
 
+  /**
+   * Edit the next round's settings. Court count and the tolerances live on the
+   * session — the round stamps its own copy when it is generated, so changing
+   * them here only moves the starting point for rounds drawn afterwards.
+   */
+  const setNextSettings = (patch: Partial<RoundSettings>) => {
+    if (patch.courtCount !== undefined) setConfig({ courtCount: patch.courtCount });
+    if (patch.pairingMode) setNextMode(patch.pairingMode);
+    if (patch.genderMode) setNextGenderMode(patch.genderMode);
+    if (patch.ratingMode) setNextRatingMode(patch.ratingMode);
+    const wtn = nextRatingMode === 'wtn';
+    if (patch.evenTolerance !== undefined)
+      setConfig(wtn ? { wtnEvenTolerance: patch.evenTolerance } : { evenTolerance: patch.evenTolerance });
+    if (patch.partnerGap !== undefined)
+      setConfig(wtn ? { wtnBalancedPartnerGap: patch.partnerGap } : { balancedPartnerGap: patch.partnerGap });
+  };
+
   const generateNext = () => {
     if (activeLite.length < 2) return alert('Mark at least 2 players present.');
-    const history = deriveHistory(session.rounds);
     const round = generateRound({
       active: activeLite,
-      mode: nextMode,
-      genderMode: nextGenderMode,
-      config: session.config,
-      history,
+      settings: nextSettings,
+      history: deriveHistory(session.rounds),
       index: session.rounds.length
     });
     update({ rounds: [...session.rounds, round] });
   };
 
-  const regenerateLast = () => {
-    const i = session.rounds.length - 1;
-    if (i < 0) return;
-    const last = session.rounds[i];
-    if (last.locked) return;
-    const history = deriveHistory(session.rounds.slice(0, i));
-    const round = generateRound({
-      active: activeLite,
-      mode: last.pairingMode,
-      genderMode: last.genderMode ?? 'same',
-      config: session.config,
-      history,
-      index: i
-    });
-    update({ rounds: [...session.rounds.slice(0, i), round] });
+  /**
+   * Edit one round's settings. Tolerances are scale-specific, so switching a
+   * round's rating mode reseeds them from the session defaults for that scale
+   * rather than carrying a grade number over to WTN.
+   */
+  const setRoundSettings = (i: number, patch: Partial<RoundSettings>) => {
+    const full = patch.ratingMode
+      ? { ...patch, ...ratingTolerances(session.config, patch.ratingMode) }
+      : patch;
+    update({ rounds: session.rounds.map((r, idx) => (idx === i ? { ...r, ...full } : r)) });
   };
 
-  const deleteLast = () => {
-    if (session.rounds.length === 0) return;
-    update({ rounds: session.rounds.slice(0, -1) });
+  /** Redraw one round from the history of the rounds before it. */
+  const regenerateRound = (i: number) => {
+    const target = session.rounds[i];
+    if (!target || target.locked) return;
+    if (activeLite.length < 2) return alert('Mark at least 2 players present.');
+    const round = generateRound({
+      active: activeLite,
+      // The round's own court count and tolerances — not the session defaults.
+      settings: roundSettings(target, session.config),
+      history: deriveHistory(session.rounds.slice(0, i)),
+      index: i
+    });
+    update({ rounds: session.rounds.map((r, idx) => (idx === i ? round : r)) });
+    setSelected(null);
+  };
+
+  /** Deleting a round shifts the later ones up, so their index — the printed round number — is rewritten. */
+  const deleteRound = (i: number) => {
+    update({
+      rounds: session.rounds.filter((_, idx) => idx !== i).map((r, idx) => ({ ...r, index: idx }))
+    });
+    setSelected(null);
   };
 
   const toggleLock = (i: number) => {
@@ -259,7 +454,7 @@ export default function SessionView({ session, players, onChange, onAddPlayerToD
     setSelected(null);
   };
 
-  const plan = planRound(activeLite.length, session.config.courtCount);
+  const plan = planRound(activeLite.length, nextSettings.courtCount);
 
   const sortedRoster = session.players
     .slice()
@@ -273,7 +468,7 @@ export default function SessionView({ session, players, onChange, onAddPlayerToD
           <button onClick={() => window.print()}>Print draw</button>
         </div>
         <div className="row">
-          <label className="small">
+          <label className="small" title="Courts a new round starts with — any round can be drawn on a different number.">
             Courts{' '}
             <input
               type="number"
@@ -295,35 +490,9 @@ export default function SessionView({ session, players, onChange, onAddPlayerToD
               onChange={(e) => setConfig({ totalRounds: Math.max(1, Number(e.target.value) || 1) })}
             />
           </label>
-          <label
-            className="small"
-            title="Largest allowed difference between the two sides' average grades for a match to count as “even”. Lower = stricter (tighter matches); higher = more flexible. Draws show Δ in green when within this."
-          >
-            Even tolerance <InfoIcon />{' '}
-            <input
-              type="number"
-              step={0.5}
-              min={0}
-              max={6}
-              style={{ width: 64 }}
-              value={session.config.evenTolerance}
-              onChange={(e) => setConfig({ evenTolerance: Math.max(0, Number(e.target.value) || 0) })}
-            />
-          </label>
-          <label
-            className="small"
-            title="Balanced mode only: largest grade gap allowed between two partners on the same side. Lower = partners must be closer in grade."
-          >
-            Balanced partner gap <InfoIcon />{' '}
-            <input
-              type="number"
-              min={0}
-              max={10}
-              style={{ width: 64 }}
-              value={session.config.balancedPartnerGap}
-              onChange={(e) => setConfig({ balancedPartnerGap: Math.max(0, Number(e.target.value) || 0) })}
-            />
-          </label>
+          <span className="small muted">
+            Courts, pairing, gender, rating scale and tolerances are all set per round, below.
+          </span>
         </div>
       </div>
 
@@ -331,13 +500,6 @@ export default function SessionView({ session, players, onChange, onAddPlayerToD
         <h3>
           Roster — {activeLite.length} present of {session.players.length}
         </h3>
-        <p className="small muted">
-          Next round: {plan.formats.filter((f) => f === 'doubles').length} doubles
-          {plan.formats.includes('singles') && ' + 1 singles'}
-          {plan.formats.includes('uneven') && ' + 1 uneven (1v2)'}
-          {plan.byeCount > 0 && `, ${plan.byeCount} bye${plan.byeCount > 1 ? 's' : ''}`}.
-        </p>
-
         <div className="row">
           <input
             className="grow"
@@ -400,6 +562,7 @@ export default function SessionView({ session, players, onChange, onAddPlayerToD
                   <th>Present</th>
                   <th>Name</th>
                   <th>Grade</th>
+                  <th>WTN</th>
                   <th>Gender</th>
                   <th>Played</th>
                   <th />
@@ -427,6 +590,18 @@ export default function SessionView({ session, players, onChange, onAddPlayerToD
                       />
                     </td>
                     <td>
+                      <input
+                        type="number"
+                        step="0.1"
+                        min={WTN_MIN}
+                        max={WTN_MAX}
+                        style={{ width: 76 }}
+                        placeholder="—"
+                        value={p.wtn ?? ''}
+                        onChange={(e) => setSessionWtn(p.playerId, e.target.value)}
+                      />
+                    </td>
+                    <td>
                       <span className={`badge ${p.gender.toLowerCase()}`}>{p.gender === 'M' ? 'Male' : 'Female'}</span>
                     </td>
                     <td>{playedCount.get(p.playerId) ?? 0}</td>
@@ -444,39 +619,30 @@ export default function SessionView({ session, players, onChange, onAddPlayerToD
       </div>
 
       <div className="card no-print">
-        <div className="row between">
-          <h3>Generate</h3>
-          <div className="row">
-            <label className="small">
-              Grading Mode{' '}
-              <select value={nextMode} onChange={(e) => setNextMode(e.target.value as PairingMode)}>
-                <option value="balanced">Balanced (similar grades)</option>
-                <option value="mixed">Mixed (strong + weak)</option>
-              </select>
-            </label>
-            <label className="small">
-              Gender Mode{' '}
-              <select
-                value={nextGenderMode}
-                onChange={(e) => setNextGenderMode(e.target.value as GenderMode)}
-              >
-                <option value="same">Same gender</option>
-                <option value="mixed">Mixed gender</option>
-              </select>
-            </label>
+        <h3>Next round — round {session.rounds.length + 1}</h3>
+        <p className="small muted" style={{ marginTop: 0 }}>
+          {plan.formats.filter((f) => f === 'doubles').length} doubles
+          {plan.formats.includes('singles') && ' + 1 singles'}
+          {plan.formats.includes('uneven') && ' + 1 uneven (1v2)'}
+          {plan.byeCount > 0 && `, ${plan.byeCount} bye${plan.byeCount > 1 ? 's' : ''}`} from{' '}
+          {activeLite.length} present.
+        </p>
+        <div className="settings-bar">
+          <SettingsFields value={nextSettings} onChange={setNextSettings} />
+          <span className="grow" />
+          <div className="bar-actions">
             <button className="primary" onClick={generateNext}>
-              {session.rounds.length === 0 ? 'Generate round 1' : `Generate round ${session.rounds.length + 1}`}
+              Generate round {session.rounds.length + 1}
             </button>
-            {session.rounds.length > 0 && !session.rounds[session.rounds.length - 1].locked && (
-              <button onClick={regenerateLast}>Regenerate last</button>
-            )}
-            {session.rounds.length > 0 && (
-              <button className="ghost danger" onClick={deleteLast}>
-                Delete last
-              </button>
-            )}
           </div>
         </div>
+        {nextRatingMode === 'wtn' && missingWtn > 0 && (
+          <p className="small errors" style={{ marginBottom: 0 }}>
+            ⚠ {missingWtn} of {activeLite.length} present player{missingWtn === 1 ? ' has' : 's have'} no
+            WTN — they will be drawn as {WTN_DEFAULT.toFixed(1)}. Sync WTN in the directory, or set a
+            number in the roster above.
+          </p>
+        )}
       </div>
 
       {session.rounds.length === 0 ? (
@@ -486,14 +652,17 @@ export default function SessionView({ session, players, onChange, onAddPlayerToD
           <RoundCard
             key={round.index}
             round={round}
-            grade={grade}
+            settings={roundSettings(round, session.config)}
+            rating={ratingFor(round.ratingMode ?? 'grade')}
             gender={gender}
             name={name}
-            tolerance={session.config.evenTolerance}
             selected={selected}
             onChip={onChipClick}
             onRemove={onRemoveFromRound}
             onAddToSide={onAddToSide}
+            onSettings={setRoundSettings}
+            onRegenerate={regenerateRound}
+            onDelete={deleteRound}
             onToggleLock={() => toggleLock(round.index)}
           />
         ))
@@ -512,18 +681,40 @@ export default function SessionView({ session, players, onChange, onAddPlayerToD
 
 interface RoundCardProps {
   round: Round;
-  grade: (id: string) => number;
+  settings: RoundSettings;
+  rating: (id: string) => number;
   gender: (id: string) => Gender;
   name: (id: string) => string;
-  tolerance: number;
   selected: { round: number; id: string } | null;
   onChip: (roundIndex: number, id: string, locked: boolean) => void;
   onRemove: (roundIndex: number, id: string) => void;
   onAddToSide: (roundIndex: number, id: string, court: number, side: 'A' | 'B') => void;
+  onSettings: (roundIndex: number, patch: Partial<RoundSettings>) => void;
+  onRegenerate: (roundIndex: number) => void;
+  onDelete: (roundIndex: number) => void;
   onToggleLock: () => void;
 }
 
-function RoundCard({ round, grade, gender, name, tolerance, selected, onChip, onRemove, onAddToSide, onToggleLock }: RoundCardProps) {
+function RoundCard({
+  round,
+  settings,
+  rating,
+  gender,
+  name,
+  selected,
+  onChip,
+  onRemove,
+  onAddToSide,
+  onSettings,
+  onRegenerate,
+  onDelete,
+  onToggleLock
+}: RoundCardProps) {
+  const ratingMode = settings.ratingMode;
+  // Grades are shown as D6; WTNs as 28.2, so the chip reads as the number drawn on.
+  const ratingLabel = (id: string) =>
+    ratingMode === 'wtn' ? rating(id).toFixed(1) : `D${rating(id)}`;
+
   const chip = (id: string) => {
     const isSel = selected?.round === round.index && selected.id === id;
     return (
@@ -534,7 +725,7 @@ function RoundCard({ round, grade, gender, name, tolerance, selected, onChip, on
         title={round.locked ? 'Round locked' : 'Click two players to swap them'}
       >
         <span className="nm">{name(id)}</span>
-        <span className="badge grade">D{grade(id)}</span>
+        <span className="badge grade">{ratingLabel(id)}</span>
         <span className={`badge ${gender(id).toLowerCase()}`}>{gender(id)}</span>
         {!round.locked && (
           <span
@@ -562,15 +753,46 @@ function RoundCard({ round, grade, gender, name, tolerance, selected, onChip, on
 
   return (
     <div className="card" style={{ '--court-count': round.matches.length } as React.CSSProperties}>
-      <div className="row between">
-        <h3>
-          Round {round.index + 1}{' '}
-          <span className="badge">{round.pairingMode === 'balanced' ? 'Balanced' : 'Mixed'}</span>{' '}
-          <span className="badge">{(round.genderMode ?? 'same') === 'same' ? 'Same gender' : 'Mixed gender'}</span>
-        </h3>
-        <label className="small no-print">
-          <input type="checkbox" checked={round.locked} onChange={onToggleLock} /> Lock
-        </label>
+      <h3>
+        Round {round.index + 1}
+        {/* On screen the controls below say all this; the print sheet needs it spelled out. */}
+        <span className="print-only inline">
+          {' '}
+          <span className="badge">{settings.pairingMode === 'balanced' ? 'Balanced' : 'Mixed'}</span>{' '}
+          <span className="badge">{settings.genderMode === 'same' ? 'Same gender' : 'Mixed gender'}</span>{' '}
+          <span className="badge">{ratingMode === 'wtn' ? 'By WTN' : 'By grade'}</span>
+        </span>
+      </h3>
+
+      <div className="settings-bar no-print">
+        <SettingsFields
+          value={settings}
+          disabled={round.locked}
+          onChange={(patch) => onSettings(round.index, patch)}
+        />
+        <span className="grow" />
+        <div className="bar-actions">
+          <button
+            onClick={() => onRegenerate(round.index)}
+            disabled={round.locked}
+            title="Redraw this round with the settings above, keeping earlier rounds as history"
+          >
+            ↻ Redraw
+          </button>
+          <button
+            className={round.locked ? 'primary' : ''}
+            onClick={onToggleLock}
+            title={round.locked ? 'Unlock to edit or redraw this round' : 'Lock this round so it cannot be edited or redrawn'}
+          >
+            {round.locked ? '🔒 Locked' : 'Lock'}
+          </button>
+          <button
+            className="ghost danger"
+            onClick={() => confirm(`Delete round ${round.index + 1}?`) && onDelete(round.index)}
+          >
+            Delete
+          </button>
+        </div>
       </div>
 
       <div className="courts">
@@ -578,9 +800,10 @@ function RoundCard({ round, grade, gender, name, tolerance, selected, onChip, on
           <CourtCard
             key={m.court}
             match={m}
-            grade={grade}
+            rating={rating}
+            ratingMode={ratingMode}
             gender={gender}
-            tolerance={tolerance}
+            tolerance={settings.evenTolerance}
             chip={chip}
             addTargetId={addTargetId}
             onAdd={(court, side) => addTargetId && onAddToSide(round.index, addTargetId, court, side)}
@@ -604,7 +827,8 @@ function RoundCard({ round, grade, gender, name, tolerance, selected, onChip, on
 
 interface CourtCardProps {
   match: Match;
-  grade: (id: string) => number;
+  rating: (id: string) => number;
+  ratingMode: RatingMode;
   gender: (id: string) => Gender;
   tolerance: number;
   chip: (id: string) => React.ReactNode;
@@ -612,8 +836,8 @@ interface CourtCardProps {
   onAdd: (court: number, side: 'A' | 'B') => void;
 }
 
-function CourtCard({ match, grade, gender, tolerance, chip, addTargetId, onAdd }: CourtCardProps) {
-  const gap = matchGap(match, grade);
+function CourtCard({ match, rating, ratingMode, gender, tolerance, chip, addTargetId, onAdd }: CourtCardProps) {
+  const gap = matchGap(match, rating);
   const even = gap <= tolerance;
   const mvw = isMenVsWomen(match, gender);
   const label = match.format === 'doubles' ? 'Doubles' : match.format === 'singles' ? 'Singles' : 'Uneven 1v2';
@@ -631,7 +855,10 @@ function CourtCard({ match, grade, gender, tolerance, chip, addTargetId, onAdd }
         <span>
           Court {match.court} <span className="tag">{label}</span>
         </span>
-        <span className={even ? 'gap-ok' : 'gap-warn'} title="Average-grade difference">
+        <span
+          className={even ? 'gap-ok' : 'gap-warn'}
+          title={ratingMode === 'wtn' ? 'Average-WTN difference' : 'Average-grade difference'}
+        >
           Δ{gap.toFixed(1)}
         </span>
       </h4>
