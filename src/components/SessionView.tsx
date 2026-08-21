@@ -286,6 +286,13 @@ function addToLatestRoundByes(rounds: Round[], ids: string[]): Round[] {
   return rounds.map((r, idx) => (idx === i ? { ...r, byes: [...r.byes, ...toAdd] } : r));
 }
 
+/** Every round but the newest — the fold state a session opens on. */
+function foldedRounds(roundCount: number): Set<number> {
+  const folded = new Set<number>();
+  for (let i = 0; i < roundCount - 1; i++) folded.add(i);
+  return folded;
+}
+
 export default function SessionView({ session, players, onChange, onAddPlayerToDirectory }: Props) {
   const [search, setSearch] = useState('');
   const [nextMode, setNextMode] = useState<PairingMode>('balanced');
@@ -298,6 +305,11 @@ export default function SessionView({ session, players, onChange, onAddPlayerToD
   // The round whose Print button was pressed. Printing is per round: the class
   // this puts on the page hides every other card, so one round fills one sheet.
   const [printIndex, setPrintIndex] = useState<number | null>(null);
+  // Rounds folded down to just their heading. Opening a session — and drawing a
+  // round — leaves only the newest one open; a heading reopens any of them.
+  const [collapsed, setCollapsed] = useState<ReadonlySet<number>>(() =>
+    foldedRounds(session.rounds.length)
+  );
 
   useEffect(() => {
     if (printIndex === null) return;
@@ -441,6 +453,7 @@ export default function SessionView({ session, players, onChange, onAddPlayerToD
       history: deriveHistory(session.rounds),
       index: session.rounds.length
     });
+    setCollapsed(foldedRounds(session.rounds.length + 1));
     update({ rounds: [...session.rounds, round] });
   };
 
@@ -477,12 +490,26 @@ export default function SessionView({ session, players, onChange, onAddPlayerToD
     update({
       rounds: session.rounds.filter((_, idx) => idx !== i).map((r, idx) => ({ ...r, index: idx }))
     });
+    // The rounds after this one move up a number, and their fold state with them.
+    setCollapsed((prev) => {
+      const next = new Set<number>();
+      for (const idx of prev) if (idx !== i) next.add(idx > i ? idx - 1 : idx);
+      return next;
+    });
     setSelected(null);
   };
 
   const toggleLock = (i: number) => {
     update({
       rounds: session.rounds.map((r, idx) => (idx === i ? { ...r, locked: !r.locked } : r))
+    });
+  };
+
+  const toggleCollapsed = (i: number) => {
+    setCollapsed((prev) => {
+      const next = new Set(prev);
+      if (!next.delete(i)) next.add(i);
+      return next;
     });
   };
 
@@ -656,11 +683,35 @@ export default function SessionView({ session, players, onChange, onAddPlayerToD
         )}
       </div>
 
+      {session.rounds.length === 0 ? (
+        <p className="empty no-print">No rounds yet. Mark who's present and generate round 1.</p>
+      ) : (
+        session.rounds.map((round) => (
+          <RoundCard
+            key={round.index}
+            round={round}
+            settings={roundSettings(round, session.config)}
+            collapsed={collapsed.has(round.index)}
+            printing={printIndex === round.index}
+            rating={ratingFor(round.ratingMode ?? 'grade')}
+            gender={gender}
+            name={name}
+            selected={selected}
+            onChip={onChipClick}
+            onRemove={onRemoveFromRound}
+            onAddToSide={onAddToSide}
+            onSettings={setRoundSettings}
+            onRegenerate={regenerateRound}
+            onDelete={deleteRound}
+            onToggleLock={() => toggleLock(round.index)}
+            onToggleCollapsed={() => toggleCollapsed(round.index)}
+            onPrint={() => setPrintIndex(round.index)}
+          />
+        ))
+      )}
+
       <div className="card no-print">
-        <h3>
-          Next round — round {session.rounds.length + 1}
-          {session.rounds.length < session.config.totalRounds && ` of ${session.config.totalRounds}`}
-        </h3>
+        <h3>Next round — round {session.rounds.length + 1}</h3>
         <p className="small muted" style={{ marginTop: 0 }}>
           {plan.formats.filter((f) => f === 'doubles').length} doubles
           {plan.formats.includes('singles') && ' + 1 singles'}
@@ -685,32 +736,6 @@ export default function SessionView({ session, players, onChange, onAddPlayerToD
           </p>
         )}
       </div>
-
-      {session.rounds.length === 0 ? (
-        <p className="empty no-print">No rounds yet. Mark who's present and generate round 1.</p>
-      ) : (
-        session.rounds.map((round) => (
-          <RoundCard
-            key={round.index}
-            round={round}
-            settings={roundSettings(round, session.config)}
-            totalRounds={session.config.totalRounds}
-            printing={printIndex === round.index}
-            rating={ratingFor(round.ratingMode ?? 'grade')}
-            gender={gender}
-            name={name}
-            selected={selected}
-            onChip={onChipClick}
-            onRemove={onRemoveFromRound}
-            onAddToSide={onAddToSide}
-            onSettings={setRoundSettings}
-            onRegenerate={regenerateRound}
-            onDelete={deleteRound}
-            onToggleLock={() => toggleLock(round.index)}
-            onPrint={() => setPrintIndex(round.index)}
-          />
-        ))
-      )}
     </div>
   );
 }
@@ -718,8 +743,8 @@ export default function SessionView({ session, players, onChange, onAddPlayerToD
 interface RoundCardProps {
   round: Round;
   settings: RoundSettings;
-  /** Rounds the session is planned to run, for the "round 2 of 6" heading. */
-  totalRounds: number;
+  /** Folded down to its heading, hiding the courts and controls. */
+  collapsed: boolean;
   /** This round is the one being printed, so it is the only card on the sheet. */
   printing: boolean;
   rating: (id: string) => number;
@@ -733,13 +758,14 @@ interface RoundCardProps {
   onRegenerate: (roundIndex: number) => void;
   onDelete: (roundIndex: number) => void;
   onToggleLock: () => void;
+  onToggleCollapsed: () => void;
   onPrint: () => void;
 }
 
 function RoundCard({
   round,
   settings,
-  totalRounds,
+  collapsed,
   printing,
   rating,
   gender,
@@ -752,6 +778,7 @@ function RoundCard({
   onRegenerate,
   onDelete,
   onToggleLock,
+  onToggleCollapsed,
   onPrint
 }: RoundCardProps) {
   const ratingMode = settings.ratingMode;
@@ -795,6 +822,43 @@ function RoundCard({
       ? selected.id
       : null;
 
+  /** The round number doubles as the fold toggle; print gets the plain number. */
+  const heading = (
+    <h3>
+      <button
+        type="button"
+        className="round-toggle no-print"
+        aria-expanded={!collapsed}
+        title={collapsed ? 'Show this round' : 'Fold this round away'}
+        onClick={onToggleCollapsed}
+      >
+        <span className="caret" aria-hidden="true">{collapsed ? '▸' : '▾'}</span>
+        Round {round.index + 1}
+      </button>
+      <span className="print-only inline">Round {round.index + 1}</span>
+      {collapsed && (
+        <span className="round-summary small muted no-print">
+          {round.matches.length} court{round.matches.length === 1 ? '' : 's'}
+          {round.byes.length > 0 && `, ${round.byes.length} bye${round.byes.length > 1 ? 's' : ''}`}
+          {round.locked && ' · 🔒 locked'}
+        </span>
+      )}
+      {/* On screen the controls below say all this; the print sheet needs it spelled out. */}
+      <span className="print-only inline">
+        {' '}
+        <span className="badge">{settings.pairingMode === 'balanced' ? 'Balanced' : 'Mixed'}</span>{' '}
+        <span className="badge">{settings.genderMode === 'same' ? 'Same gender' : 'Mixed gender'}</span>{' '}
+        <span className="badge">{ratingMode === 'wtn' ? 'By WTN' : 'By grade'}</span>
+      </span>
+    </h3>
+  );
+
+  // Folded: the heading is the whole card. Printing this round overrides the
+  // fold, so the sheet still carries its courts.
+  if (collapsed && !printing) {
+    return <div className="card folded no-print">{heading}</div>;
+  }
+
   return (
     <div
       className={printing ? 'card print-target' : 'card'}
@@ -808,17 +872,7 @@ function RoundCard({
         } as React.CSSProperties
       }
     >
-      <h3>
-        Round {round.index + 1}
-        {round.index + 1 <= totalRounds && ` of ${totalRounds}`}
-        {/* On screen the controls below say all this; the print sheet needs it spelled out. */}
-        <span className="print-only inline">
-          {' '}
-          <span className="badge">{settings.pairingMode === 'balanced' ? 'Balanced' : 'Mixed'}</span>{' '}
-          <span className="badge">{settings.genderMode === 'same' ? 'Same gender' : 'Mixed gender'}</span>{' '}
-          <span className="badge">{ratingMode === 'wtn' ? 'By WTN' : 'By grade'}</span>
-        </span>
-      </h3>
+      {heading}
 
       <div className="settings-bar no-print">
         <SettingsFields

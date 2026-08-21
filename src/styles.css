@@ -250,6 +250,23 @@ th { font-size: 0.8rem; text-transform: uppercase; color: var(--muted); letter-s
 
 .tag { font-size: 0.7rem; text-transform: uppercase; color: var(--muted); }
 
+/* A round's number is the button that folds the card down to just this line. */
+.round-toggle {
+  padding: 0;
+  border: none;
+  background: none;
+  font: inherit;
+  color: inherit;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.35rem;
+}
+.round-toggle:hover { color: var(--green); }
+.round-toggle .caret { color: var(--muted); font-size: 0.75em; }
+.round-summary { margin-left: 0.5rem; font-weight: 400; }
+.card.folded { padding: 0.55rem 1rem; margin-bottom: 0.5rem; }
+.card.folded h3 { margin: 0; }
+
 .modal-backdrop {
   position: fixed; inset: 0; background: rgba(0,0,0,0.45);
   display: flex; align-items: center; justify-content: center; padding: 1rem; z-index: 50;
