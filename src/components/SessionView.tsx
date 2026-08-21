@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Gender, GenderMode, Match, MatchFormat, PairingMode, Player, RatingMode, Round, RoundSettings, Session, SessionPlayer } from '../types';
 import { GRADE_MAX, GRADE_MIN, WTN_DEFAULT, WTN_MAX, WTN_MIN } from '../types';
 import {
@@ -12,6 +12,15 @@ import {
   type PlayerLite
 } from '../draw';
 import { uid } from '../util';
+import CountInput from './CountInput';
+
+/**
+ * Print layout: courts go two to a row, ten to a sheet. A round with more prints
+ * across as many sheets as it needs, ten courts at a time.
+ */
+const PRINT_COLUMNS = 2;
+const MAX_PRINT_COURTS = 10;
+const PRINT_ROWS_PER_PAGE = MAX_PRINT_COURTS / PRINT_COLUMNS;
 
 interface Props {
   session: Session;
@@ -44,21 +53,68 @@ function InfoIcon() {
 
 interface FieldProps {
   label: string;
-  /** Hover explanation; also puts an info mark next to the label. */
+  /** Explanation behind an info mark next to the label, opened by clicking it. */
   hint?: string;
-  /** Flags a field the current settings ignore, without taking the control away. */
-  note?: string;
   children: React.ReactNode;
 }
 
+/** Widest a hint bubble gets, matching .hint-bubble — used to decide which way it opens. */
+const HINT_WIDTH = 240;
+
 /** One labelled control in a settings bar. */
-function Field({ label, hint, note, children }: FieldProps) {
+function Field({ label, hint, children }: FieldProps) {
+  const [open, setOpen] = useState(false);
+  /** Near the right edge the bubble opens leftwards instead, to stay on screen. */
+  const [flip, setFlip] = useState(false);
+  const anchor = useRef<HTMLSpanElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      if (!anchor.current?.contains(e.target as Node)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOpen(false);
+    };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [open]);
+
+  const toggle = (e: React.MouseEvent) => {
+    // Without this the wrapping <label> hands the click on to its control.
+    e.preventDefault();
+    e.stopPropagation();
+    const rect = anchor.current?.getBoundingClientRect();
+    if (rect) setFlip(rect.left + HINT_WIDTH > window.innerWidth - 8);
+    setOpen((v) => !v);
+  };
+
   return (
-    <label className="field" title={hint}>
+    <label className="field">
       <span className="field-label">
         {label}
-        {hint && <InfoIcon />}
-        {note && <span className="field-note">{note}</span>}
+        {hint && (
+          <span className="hint" ref={anchor}>
+            <button
+              type="button"
+              className="hint-btn"
+              aria-expanded={open}
+              aria-label={`About ${label}`}
+              onClick={toggle}
+            >
+              <InfoIcon />
+            </button>
+            {open && (
+              <span className={flip ? 'hint-bubble flip' : 'hint-bubble'} role="tooltip">
+                {hint}
+              </span>
+            )}
+          </span>
+        )}
       </span>
       {children}
     </label>
@@ -73,7 +129,7 @@ interface SettingsFieldsProps {
 }
 
 /**
- * The five draw settings of one round, shared by the next-round bar and every
+ * The six draw settings of one round, shared by the next-round bar and every
  * generated round so both read the same way.
  */
 function SettingsFields({ value, disabled, onChange }: SettingsFieldsProps) {
@@ -82,29 +138,12 @@ function SettingsFields({ value, disabled, onChange }: SettingsFieldsProps) {
   const num = (raw: string) => Math.max(0, Number(raw) || 0);
   return (
     <>
-      <Field
-        label="Courts"
-        hint="Courts available for this round. Fewer courts than the roster fills means more byes; a spare court absorbs leftovers as a singles or an uneven 1v2."
-      >
-        <input
-          type="number"
-          min={1}
-          max={20}
-          disabled={disabled}
+      <Field label="Courts">
+        <CountInput
           value={value.courtCount}
-          onChange={(e) => onChange({ courtCount: Math.max(1, Number(e.target.value) || 1) })}
-        />
-      </Field>
-
-      <Field label="Pairing">
-        <select
           disabled={disabled}
-          value={value.pairingMode}
-          onChange={(e) => onChange({ pairingMode: e.target.value as PairingMode })}
-        >
-          <option value="balanced">Balanced — similar</option>
-          <option value="mixed">Mixed — strong + weak</option>
-        </select>
+          onChange={(courtCount) => onChange({ courtCount })}
+        />
       </Field>
 
       <Field label="Gender">
@@ -118,10 +157,18 @@ function SettingsFields({ value, disabled, onChange }: SettingsFieldsProps) {
         </select>
       </Field>
 
-      <Field
-        label="Rate by"
-        hint="Which number the draw balances on. Both run low = stronger; only the spread differs, so each scale carries its own tolerances."
-      >
+      <Field label="Pairing">
+        <select
+          disabled={disabled}
+          value={value.pairingMode}
+          onChange={(e) => onChange({ pairingMode: e.target.value as PairingMode })}
+        >
+          <option value="balanced">Balanced — similar</option>
+          <option value="mixed">Mixed — strong + weak</option>
+        </select>
+      </Field>
+
+      <Field label="Rate by">
         <select
           disabled={disabled}
           value={value.ratingMode}
@@ -147,23 +194,25 @@ function SettingsFields({ value, disabled, onChange }: SettingsFieldsProps) {
         />
       </Field>
 
-      <Field
-        // Mixed pairing ignores the number rather than clamping to it, so the field
-        // stays editable — you can dial it in before switching back to Balanced.
-        label={`Partner gap ≤ (${unit})`}
-        note={value.pairingMode === 'balanced' ? undefined : 'Balanced only'}
-        hint="Balanced pairing only: largest gap allowed between two partners on the same side. Lower = partners must be closer. Mixed pairing ignores it."
-      >
-        <input
-          type="number"
-          step={wtn ? 0.5 : 1}
-          min={0}
-          max={wtn ? 20 : 10}
-          disabled={disabled}
-          value={value.partnerGap}
-          onChange={(e) => onChange({ partnerGap: num(e.target.value) })}
-        />
-      </Field>
+      {/* Only Balanced pairing uses a partner gap; Mixed ignores it, so it is */}
+      {/* hidden rather than shown as a control that does nothing. The stored */}
+      {/* number is untouched and comes back when Balanced is picked again. */}
+      {value.pairingMode === 'balanced' && (
+        <Field
+          label={`Partner gap ≤ (${unit})`}
+          hint="Largest gap allowed between two partners on the same side. Lower = partners must be closer."
+        >
+          <input
+            type="number"
+            step={wtn ? 0.5 : 1}
+            min={0}
+            max={wtn ? 20 : 10}
+            disabled={disabled}
+            value={value.partnerGap}
+            onChange={(e) => onChange({ partnerGap: num(e.target.value) })}
+          />
+        </Field>
+      )}
     </>
   );
 }
@@ -246,6 +295,16 @@ export default function SessionView({ session, players, onChange, onAddPlayerToD
   const [nextRatingMode, setNextRatingMode] = useState<RatingMode>('wtn');
   const [selected, setSelected] = useState<{ round: number; id: string } | null>(null);
   const [walkin, setWalkin] = useState({ name: '', grade: '6', gender: 'M' as Gender, phone: '' });
+  // The round whose Print button was pressed. Printing is per round: the class
+  // this puts on the page hides every other card, so one round fills one sheet.
+  const [printIndex, setPrintIndex] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (printIndex === null) return;
+    // Runs after the class has landed on the DOM, so the dialog sees one round.
+    window.print();
+    setPrintIndex(null);
+  }, [printIndex]);
 
   const playerById = useMemo(() => {
     const m = new Map<string, SessionPlayer>();
@@ -456,54 +515,28 @@ export default function SessionView({ session, players, onChange, onAddPlayerToD
 
   const plan = planRound(activeLite.length, nextSettings.courtCount);
 
-  const sortedRoster = session.players
-    .slice()
-    .sort((a, b) => a.name.localeCompare(b.name));
+  // The search box does double duty: it looks people up in the directory to add
+  // them, and narrows the roster below to the players already added.
+  const sortedRoster = useMemo(() => {
+    const list = session.players.slice().sort((a, b) => a.name.localeCompare(b.name));
+    const q = search.trim().toLowerCase();
+    if (!q) return list;
+    return list.filter(
+      (p) => p.name.toLowerCase().includes(q) || (p.phone ?? '').toLowerCase().includes(q)
+    );
+  }, [session.players, search]);
 
   return (
-    <div>
-      <div className="card no-print">
-        <div className="row between">
-          <h2>{session.name}</h2>
-          <button onClick={() => window.print()}>Print draw</button>
-        </div>
-        <div className="row">
-          <label className="small" title="Courts a new round starts with — any round can be drawn on a different number.">
-            Courts{' '}
-            <input
-              type="number"
-              min={1}
-              max={20}
-              style={{ width: 64 }}
-              value={session.config.courtCount}
-              onChange={(e) => setConfig({ courtCount: Math.max(1, Number(e.target.value) || 1) })}
-            />
-          </label>
-          <label className="small">
-            Total rounds{' '}
-            <input
-              type="number"
-              min={1}
-              max={20}
-              style={{ width: 64 }}
-              value={session.config.totalRounds}
-              onChange={(e) => setConfig({ totalRounds: Math.max(1, Number(e.target.value) || 1) })}
-            />
-          </label>
-          <span className="small muted">
-            Courts, pairing, gender, rating scale and tolerances are all set per round, below.
-          </span>
-        </div>
-      </div>
-
+    <div className={printIndex === null ? undefined : 'print-one'}>
       <div className="card no-print">
         <h3>
           Roster — {activeLite.length} present of {session.players.length}
+          {search.trim() && ` — showing ${sortedRoster.length} matching`}
         </h3>
         <div className="row">
           <input
             className="grow"
-            placeholder="Add from directory — search name or phone…"
+            placeholder="Search name or phone — filters the roster, or add from directory…"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
           />
@@ -554,6 +587,11 @@ export default function SessionView({ session, players, onChange, onAddPlayerToD
           </div>
         </details>
 
+        {session.players.length > 0 && sortedRoster.length === 0 && (
+          <p className="small muted" style={{ marginTop: '0.6rem' }}>
+            No added player matches “{search.trim()}”.
+          </p>
+        )}
         {sortedRoster.length > 0 && (
           <div className="scroll-list" style={{ marginTop: '0.6rem' }}>
             <table>
@@ -619,7 +657,10 @@ export default function SessionView({ session, players, onChange, onAddPlayerToD
       </div>
 
       <div className="card no-print">
-        <h3>Next round — round {session.rounds.length + 1}</h3>
+        <h3>
+          Next round — round {session.rounds.length + 1}
+          {session.rounds.length < session.config.totalRounds && ` of ${session.config.totalRounds}`}
+        </h3>
         <p className="small muted" style={{ marginTop: 0 }}>
           {plan.formats.filter((f) => f === 'doubles').length} doubles
           {plan.formats.includes('singles') && ' + 1 singles'}
@@ -653,6 +694,8 @@ export default function SessionView({ session, players, onChange, onAddPlayerToD
             key={round.index}
             round={round}
             settings={roundSettings(round, session.config)}
+            totalRounds={session.config.totalRounds}
+            printing={printIndex === round.index}
             rating={ratingFor(round.ratingMode ?? 'grade')}
             gender={gender}
             name={name}
@@ -664,17 +707,10 @@ export default function SessionView({ session, players, onChange, onAddPlayerToD
             onRegenerate={regenerateRound}
             onDelete={deleteRound}
             onToggleLock={() => toggleLock(round.index)}
+            onPrint={() => setPrintIndex(round.index)}
           />
         ))
       )}
-
-      {Array.from({ length: Math.max(0, session.config.totalRounds - session.rounds.length) }, (_, i) => (
-        <PlaceholderRoundCard
-          key={`placeholder-${i}`}
-          roundNumber={session.rounds.length + i + 1}
-          courtCount={session.config.courtCount}
-        />
-      ))}
     </div>
   );
 }
@@ -682,6 +718,10 @@ export default function SessionView({ session, players, onChange, onAddPlayerToD
 interface RoundCardProps {
   round: Round;
   settings: RoundSettings;
+  /** Rounds the session is planned to run, for the "round 2 of 6" heading. */
+  totalRounds: number;
+  /** This round is the one being printed, so it is the only card on the sheet. */
+  printing: boolean;
   rating: (id: string) => number;
   gender: (id: string) => Gender;
   name: (id: string) => string;
@@ -693,11 +733,14 @@ interface RoundCardProps {
   onRegenerate: (roundIndex: number) => void;
   onDelete: (roundIndex: number) => void;
   onToggleLock: () => void;
+  onPrint: () => void;
 }
 
 function RoundCard({
   round,
   settings,
+  totalRounds,
+  printing,
   rating,
   gender,
   name,
@@ -708,7 +751,8 @@ function RoundCard({
   onSettings,
   onRegenerate,
   onDelete,
-  onToggleLock
+  onToggleLock,
+  onPrint
 }: RoundCardProps) {
   const ratingMode = settings.ratingMode;
   // Grades are shown as D6; WTNs as 28.2, so the chip reads as the number drawn on.
@@ -752,9 +796,21 @@ function RoundCard({
       : null;
 
   return (
-    <div className="card" style={{ '--court-count': round.matches.length } as React.CSSProperties}>
+    <div
+      className={printing ? 'card print-target' : 'card'}
+      // Print sizes a court off how many rows share a sheet, not the round's total.
+      style={
+        {
+          '--print-rows': Math.min(
+            Math.ceil(round.matches.length / PRINT_COLUMNS),
+            PRINT_ROWS_PER_PAGE
+          )
+        } as React.CSSProperties
+      }
+    >
       <h3>
         Round {round.index + 1}
+        {round.index + 1 <= totalRounds && ` of ${totalRounds}`}
         {/* On screen the controls below say all this; the print sheet needs it spelled out. */}
         <span className="print-only inline">
           {' '}
@@ -772,6 +828,9 @@ function RoundCard({
         />
         <span className="grow" />
         <div className="bar-actions">
+          <button onClick={onPrint} title="Print this round's draw on its own sheet">
+            🖨 Print
+          </button>
           <button
             onClick={() => onRegenerate(round.index)}
             disabled={round.locked}
@@ -866,28 +925,6 @@ function CourtCard({ match, rating, ratingMode, gender, tolerance, chip, addTarg
       <div className="vs">vs</div>
       <div className="side">{match.sideB.map((id) => chip(id))}{addBtn('B')}</div>
       {mvw && <div className="flag">⚠ 2 men vs 2 women</div>}
-    </div>
-  );
-}
-
-function PlaceholderRoundCard({ roundNumber, courtCount }: { roundNumber: number; courtCount: number }) {
-  return (
-    <div className="card print-only" style={{ '--court-count': courtCount } as React.CSSProperties}>
-      <div className="row between">
-        <h3>Round {roundNumber}</h3>
-      </div>
-      <div className="courts">
-        {Array.from({ length: courtCount }, (_, i) => (
-          <div className="court" key={i}>
-            <h4>
-              <span>Court {i + 1} <span className="tag">Doubles</span></span>
-            </h4>
-            <div className="side placeholder-side" />
-            <div className="vs">vs</div>
-            <div className="side placeholder-side" />
-          </div>
-        ))}
-      </div>
     </div>
   );
 }

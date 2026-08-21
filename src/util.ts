@@ -13,6 +13,16 @@ export function shuffle<T>(arr: T[]): T[] {
   return a;
 }
 
+/** Names compared for identity: case and inner spacing do not count. */
+export function normName(s: string): string {
+  return s.trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
+/** Phone numbers compared for identity: only the digits count. */
+export function phoneDigits(s: string | undefined): string {
+  return (s ?? '').replace(/\D/g, '');
+}
+
 export function todayISO(): string {
   return new Date().toISOString().slice(0, 10);
 }

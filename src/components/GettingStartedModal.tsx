@@ -17,7 +17,8 @@ export default function GettingStartedModal({ onClose }: Props) {
         <p>
           Go to <strong>Player Directory</strong> and add each player with their name, grade, and gender.
           Grade is the Tennis Seniors division number (2–12; lower = stronger). Players are saved
-          permanently in your browser so you only need to do this once.
+          permanently in your browser so you only need to do this once. If the same person ends up in
+          the list twice, tick both rows and click <strong>Merge 2 entries</strong>.
         </p>
 
         <h3>2. Create a session</h3>
@@ -41,8 +42,8 @@ export default function GettingStartedModal({ onClose }: Props) {
 
         <h3>5. Print the draw</h3>
         <p>
-          Use your browser's print function to print the draw for the noticeboard. The nav and buttons are
-          automatically hidden in the printed view.
+          Each round has its own <strong>🖨 Print</strong> button, which prints just that round's draw on
+          one sheet for the noticeboard. The nav and buttons are automatically hidden in the printed view.
         </p>
 
         <p className="muted small">

@@ -1,7 +1,9 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import type { Player, Session, SessionPlayer } from '../types';
 import { DEFAULT_CONFIG } from '../types';
 import { todayISO, uid } from '../util';
+import { deriveHistory } from '../draw';
+import CountInput from './CountInput';
 
 interface Props {
   sessions: Session[];
@@ -15,8 +17,16 @@ export default function SessionsView({ sessions, players, onOpen, onCreate, onRe
   const [name, setName] = useState('');
   const [date, setDate] = useState(todayISO());
   const [courtCount, setCourtCount] = useState(DEFAULT_CONFIG.courtCount);
-  const [totalRounds, setTotalRounds] = useState(DEFAULT_CONFIG.totalRounds);
   const [loadDirectory, setLoadDirectory] = useState(false);
+
+  /**
+   * Players who have actually been on court, per session — the roster also holds
+   * people who were added but never drawn into a match, so it reads higher.
+   */
+  const playedCount = useMemo(
+    () => new Map(sessions.map((s) => [s.id, deriveHistory(s.rounds).playedCount.size] as const)),
+    [sessions]
+  );
 
   const create = () => {
     const trimmed = name.trim();
@@ -28,7 +38,7 @@ export default function SessionsView({ sessions, players, onOpen, onCreate, onRe
       id: uid(),
       name: trimmed,
       date,
-      config: { ...DEFAULT_CONFIG, courtCount, totalRounds },
+      config: { ...DEFAULT_CONFIG, courtCount },
       players: roster,
       activePlayerIds: [],
       rounds: []
@@ -36,7 +46,6 @@ export default function SessionsView({ sessions, players, onOpen, onCreate, onRe
     onCreate(session);
     setName('');
     setCourtCount(DEFAULT_CONFIG.courtCount);
-    setTotalRounds(DEFAULT_CONFIG.totalRounds);
     setLoadDirectory(false);
     onOpen(session.id);
   };
@@ -48,51 +57,29 @@ export default function SessionsView({ sessions, players, onOpen, onCreate, onRe
         <div className="row">
           <input
             className="grow"
+            style={{ minWidth: 350 }}
             placeholder="Session name (e.g. 16 May)"
             value={name}
             onChange={(e) => setName(e.target.value)}
           />
           <input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
-          <button className="primary" onClick={create}>
-            Create
-          </button>
-        </div>
-        <div className="row" style={{ marginTop: '0.4rem' }}>
           <label className="small" title="Courts the session starts with — any round can be drawn on a different number.">
-            Courts{' '}
-            <input
-              type="number"
-              min={1}
-              max={20}
-              style={{ width: 64 }}
-              value={courtCount}
-              onChange={(e) => setCourtCount(Math.max(1, Number(e.target.value) || 1))}
-            />
+            Courts <CountInput value={courtCount} style={{ width: 64 }} onChange={setCourtCount} />
           </label>
-          <label className="small" title="How many rounds the session runs — ungenerated ones still print as blank sheets.">
-            Total rounds{' '}
-            <input
-              type="number"
-              min={1}
-              max={20}
-              style={{ width: 64 }}
-              value={totalRounds}
-              onChange={(e) => setTotalRounds(Math.max(1, Number(e.target.value) || 1))}
-            />
-          </label>
-        </div>
-        {players.length > 0 && (
-          <div className="row" style={{ marginTop: '0.4rem' }}>
+          {players.length > 0 && (
             <label className="small">
               <input
                 type="checkbox"
                 checked={loadDirectory}
                 onChange={(e) => setLoadDirectory(e.target.checked)}
               />{' '}
-              Load all {players.length} player{players.length === 1 ? '' : 's'} from the directory
+              Load all {players.length} player{players.length === 1 ? '' : 's'}
             </label>
-          </div>
-        )}
+          )}
+          <button className="primary" onClick={create}>
+            Create
+          </button>
+        </div>
       </div>
 
       <div className="card">
@@ -105,7 +92,7 @@ export default function SessionsView({ sessions, players, onOpen, onCreate, onRe
               <tr>
                 <th>Name</th>
                 <th>Date</th>
-                <th>Players</th>
+                <th title="Players who have been on court in at least one round.">Players</th>
                 <th>Rounds</th>
                 <th />
               </tr>
@@ -119,7 +106,7 @@ export default function SessionsView({ sessions, players, onOpen, onCreate, onRe
                     </button>
                   </td>
                   <td>{s.date}</td>
-                  <td>{s.players.length}</td>
+                  <td>{playedCount.get(s.id) ?? 0}</td>
                   <td>{s.rounds.length}</td>
                   <td className="row">
                     <button onClick={() => onOpen(s.id)}>Open</button>

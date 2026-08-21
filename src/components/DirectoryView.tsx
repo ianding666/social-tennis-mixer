@@ -1,9 +1,11 @@
-import { useMemo, useState } from 'react';
+import { Fragment, useMemo, useState } from 'react';
 import type { Gender, Player } from '../types';
 import { GRADE_MAX, GRADE_MIN, WTN_DEFAULT, WTN_MAX, WTN_MIN } from '../types';
-import { uid } from '../util';
+import { normName, phoneDigits, uid } from '../util';
 import type { ParsedPlayer } from '../csv';
 import { parsePlayers, playersToCsv, rowsToText } from '../csv';
+import type { MergeChoice, MergeField } from '../merge';
+import { applyMerge, planMerge } from '../merge';
 import type { FillProgress } from '../wtn';
 import { fillDoublesWtn } from '../wtn';
 
@@ -11,6 +13,8 @@ interface Props {
   players: Player[];
   onUpsert: (p: Player) => void;
   onRemove: (id: string) => void;
+  /** Fold the second entry into the first. Resolves to the sessions rewritten. */
+  onMerge: (merged: Player, removedId: string) => Promise<number>;
 }
 
 const blankForm = { id: '', name: '', grade: '6', wtn: '', gender: 'M' as Gender, phone: '', club: '', notes: '' };
@@ -22,10 +26,7 @@ const DEFAULT_IMPORT_GENDER: Gender = 'M';
 /** Placeholder for a player the WTN portal has no match for — shared with the draw. */
 const DEFAULT_WTN = WTN_DEFAULT;
 
-const normName = (s: string) => s.trim().toLowerCase().replace(/\s+/g, ' ');
-const phoneDigits = (s: string | undefined) => (s ?? '').replace(/\D/g, '');
-
-export default function DirectoryView({ players, onUpsert, onRemove }: Props) {
+export default function DirectoryView({ players, onUpsert, onRemove, onMerge }: Props) {
   type SortCol = 'name' | 'grade' | 'wtn' | 'gender' | 'club';
   const [search, setSearch] = useState('');
   const [reviewOnly, setReviewOnly] = useState(false);
@@ -47,6 +48,14 @@ export default function DirectoryView({ players, onUpsert, onRemove }: Props) {
   const [note, setNote] = useState<{ text: string; problem: boolean } | null>(null);
   const [wtnRun, setWtnRun] = useState<AbortController | null>(null);
   const [progress, setProgress] = useState<FillProgress | null>(null);
+  /** Ticked rows, in the order they were ticked — two of them can be merged. */
+  const [ticked, setTicked] = useState<string[]>([]);
+  const [merge, setMerge] = useState<{
+    /** The entry that survives, keeping its id. */
+    a: Player;
+    b: Player;
+    choices: Partial<Record<MergeField, MergeChoice>>;
+  } | null>(null);
 
   const needsReviewCount = useMemo(
     () => players.filter((p) => p.needsGrade || p.needsGender).length,
@@ -70,6 +79,45 @@ export default function DirectoryView({ players, onUpsert, onRemove }: Props) {
       return sortDir === 'asc' ? cmp : -cmp;
     });
   }, [players, search, sortCol, sortDir, reviewOnly]);
+
+  /** Ticked rows that still exist. The first is the one a merge would keep. */
+  const tickedPlayers = useMemo(
+    () => ticked.map((id) => players.find((p) => p.id === id)).filter((p): p is Player => !!p),
+    [ticked, players]
+  );
+
+  const toggleTicked = (id: string) =>
+    setTicked((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+
+  const mergePlans = useMemo(() => (merge ? planMerge(merge.a, merge.b) : []), [merge]);
+
+  const startMerge = () => {
+    const [a, b] = tickedPlayers;
+    if (!a || !b) return;
+    setMerge({ a, b, choices: {} });
+  };
+
+  const choose = (field: MergeField, choice: MergeChoice) =>
+    setMerge((m) => (m ? { ...m, choices: { ...m.choices, [field]: choice } } : m));
+
+  const confirmMerge = async () => {
+    if (!merge) return;
+    const merged = applyMerge(merge.a, merge.b, merge.choices);
+    const removedId = merge.b.id;
+    setMerge(null);
+    setTicked([]);
+    const sessionsChanged = await onMerge(merged, removedId);
+    alert(
+      [
+        `Merged into ${merged.name}. The duplicate entry has been deleted.`,
+        sessionsChanged
+          ? `${sessionsChanged} session${sessionsChanged > 1 ? 's' : ''} now point at the kept entry.`
+          : ''
+      ]
+        .filter(Boolean)
+        .join('\n')
+    );
+  };
 
   const submit = () => {
     const name = form.name.trim();
@@ -458,10 +506,126 @@ export default function DirectoryView({ players, onUpsert, onRemove }: Props) {
         </div>
       )}
 
+      {merge && (
+        <div className="modal-backdrop" onClick={() => setMerge(null)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <div className="row between">
+              <h2 style={{ margin: 0 }}>Merge two entries</h2>
+              <button className="ghost" onClick={() => setMerge(null)}>✕</button>
+            </div>
+            <p className="small muted">
+              Where only one entry has a value, that value is taken. Where both have one and they
+              differ, pick the one to keep. The entry on the left survives; the other is deleted, and
+              any session that used it is repointed at the survivor.
+            </p>
+            {mergePlans.some((plan) => plan.field === 'name' && plan.conflict) && (
+              <p className="small errors">
+                These two names are not the same — check this is one person before merging.
+              </p>
+            )}
+            <div className="row between">
+              <span className="small">
+                Keeping <strong>{merge.a.name}</strong>, deleting <strong>{merge.b.name}</strong>
+              </span>
+              <button onClick={() => setMerge({ a: merge.b, b: merge.a, choices: {} })}>
+                Swap sides
+              </button>
+            </div>
+            <table className="merge-table" style={{ marginTop: '0.6rem' }}>
+              <thead>
+                <tr>
+                  <th>Field</th>
+                  <th>Keeping</th>
+                  <th>Deleting</th>
+                </tr>
+              </thead>
+              <tbody>
+                {mergePlans.map((plan) => {
+                  const chosen = plan.conflict ? merge.choices[plan.field] ?? 'a' : plan.auto;
+                  const cell = (which: 'a' | 'b') => (
+                    // Nothing to strike through when that side is simply blank.
+                    <td
+                      className={
+                        chosen === which || chosen === 'both'
+                          ? 'kept'
+                          : plan[which] === '—'
+                            ? 'muted'
+                            : 'dropped'
+                      }
+                    >
+                      {plan.conflict ? (
+                        <label className="merge-pick">
+                          <input
+                            type="radio"
+                            name={`merge-${plan.field}`}
+                            checked={chosen === which}
+                            onChange={() => choose(plan.field, which)}
+                          />
+                          <span>{plan[which]}</span>
+                        </label>
+                      ) : (
+                        <span>{plan[which]}</span>
+                      )}
+                    </td>
+                  );
+                  return (
+                    <Fragment key={plan.field}>
+                      <tr>
+                        <td className="small muted">{plan.label}</td>
+                        {cell('a')}
+                        {cell('b')}
+                      </tr>
+                      {plan.conflict && plan.canKeepBoth && (
+                        <tr>
+                          <td />
+                          <td colSpan={2}>
+                            <label className="merge-pick small">
+                              <input
+                                type="radio"
+                                name={`merge-${plan.field}`}
+                                checked={chosen === 'both'}
+                                onChange={() => choose(plan.field, 'both')}
+                              />
+                              <span>Keep both, joined with “|”</span>
+                            </label>
+                          </td>
+                        </tr>
+                      )}
+                    </Fragment>
+                  );
+                })}
+              </tbody>
+            </table>
+            <div className="row" style={{ marginTop: '0.9rem', justifyContent: 'flex-end' }}>
+              <button onClick={() => setMerge(null)}>Cancel</button>
+              <button className="primary" onClick={confirmMerge}>
+                Merge and delete duplicate
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="card">
         <div className="row between">
           <h3>Players</h3>
           <div className="row">
+            {tickedPlayers.length > 0 && (
+              <>
+                <span className="small muted">{tickedPlayers.length} ticked</span>
+                <button
+                  className="primary"
+                  disabled={tickedPlayers.length !== 2}
+                  title={tickedPlayers.length === 2 ? undefined : 'Tick exactly two entries to merge'}
+                  onClick={startMerge}
+                >
+                  Merge 2 entries
+                </button>
+                <button className="ghost" onClick={() => setTicked([])}>
+                  Clear
+                </button>
+              </>
+            )}
             {wtnRun ? (
               <button className="danger" onClick={() => wtnRun.abort()}>
                 Stop WTN sync
@@ -517,6 +681,9 @@ export default function DirectoryView({ players, onUpsert, onRemove }: Props) {
           <table>
             <thead>
               <tr>
+                <th style={{ width: '1%' }} title="Tick two entries, then Merge 2 entries">
+                  ⇊
+                </th>
                 {(['name', 'grade', 'wtn', 'gender', 'club'] as SortCol[]).map((col) => (
                   <th
                     key={col}
@@ -535,6 +702,14 @@ export default function DirectoryView({ players, onUpsert, onRemove }: Props) {
             <tbody>
               {filtered.map((p) => (
                 <tr key={p.id}>
+                  <td>
+                    <input
+                      type="checkbox"
+                      checked={ticked.includes(p.id)}
+                      onChange={() => toggleTicked(p.id)}
+                      aria-label={`Select ${p.name} for merging`}
+                    />
+                  </td>
                   <td>{p.name}</td>
                   <td>
                     <span className={`badge grade${p.needsGrade ? ' unconfirmed' : ''}`} title={p.needsGrade ? 'Grade defaulted on import — not confirmed' : undefined}>

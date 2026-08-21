@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { Player, Session } from './types';
 import * as db from './db';
+import { remapSessionPlayer } from './merge';
 import DirectoryView from './components/DirectoryView';
 import SessionsView from './components/SessionsView';
 import SessionView from './components/SessionView';
@@ -38,6 +39,29 @@ export default function App() {
       }
       return [...prev, player];
     });
+  };
+
+  /**
+   * Fold two directory entries into one. The merged entry keeps its own id, so
+   * every session that pointed at the removed one is rewritten to match —
+   * otherwise a past round would hold an id the directory no longer knows.
+   * Returns how many sessions had to be rewritten.
+   */
+  const mergePlayers = async (merged: Player, removedId: string) => {
+    await db.savePlayer(merged);
+    await db.deletePlayer(removedId);
+    setPlayers((prev) =>
+      prev.filter((p) => p.id !== removedId).map((p) => (p.id === merged.id ? merged : p))
+    );
+
+    const rewritten = sessions
+      .map((s) => remapSessionPlayer(s, removedId, merged.id))
+      .filter((s, i) => s !== sessions[i]);
+    for (const s of rewritten) await db.saveSession(s);
+    if (rewritten.length) {
+      setSessions((prev) => prev.map((s) => rewritten.find((r) => r.id === s.id) ?? s));
+    }
+    return rewritten.length;
   };
 
   const removePlayer = async (id: string) => {
@@ -96,7 +120,12 @@ export default function App() {
         {!loaded ? (
           <p className="empty">Loading…</p>
         ) : view === 'directory' ? (
-          <DirectoryView players={players} onUpsert={upsertPlayer} onRemove={removePlayer} />
+          <DirectoryView
+            players={players}
+            onUpsert={upsertPlayer}
+            onRemove={removePlayer}
+            onMerge={mergePlayers}
+          />
         ) : view === 'session' && currentSession ? (
           <SessionView
             session={currentSession}

@@ -89,8 +89,42 @@ main { padding: 1rem; max-width: 1100px; margin: 0 auto; }
 .grow { flex: 1; }
 .muted { color: var(--muted); }
 .small { font-size: 0.85rem; }
-.hint-mark { color: var(--muted); cursor: help; vertical-align: -2px; }
+.hint-mark { color: var(--muted); vertical-align: -2px; }
 label[title] { cursor: help; }
+
+/* Info mark beside a field label, and the bubble it opens when clicked. */
+.hint { position: relative; display: inline-flex; }
+.hint-btn {
+  display: inline-flex;
+  align-items: center;
+  padding: 0;
+  border: none;
+  background: none;
+  border-radius: 999px;
+  color: var(--muted);
+  line-height: 0;
+}
+.hint-btn:hover, .hint-btn[aria-expanded='true'] { color: var(--navy); }
+.hint-bubble {
+  position: absolute;
+  top: calc(100% + 0.4rem);
+  left: 0;
+  z-index: 20;
+  width: max-content;
+  max-width: min(240px, 70vw);
+  padding: 0.45rem 0.55rem;
+  border-radius: 8px;
+  background: var(--text);
+  color: #fff;
+  font-size: 0.75rem;
+  line-height: 1.35;
+  text-transform: none;
+  letter-spacing: 0;
+  white-space: normal;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.18);
+}
+/* Opened by a field near the right edge, so it hangs the other way. */
+.hint-bubble.flip { left: auto; right: 0; }
 h2 { margin-top: 0; }
 
 table { width: 100%; border-collapse: collapse; }
@@ -153,13 +187,6 @@ th { font-size: 0.8rem; text-transform: uppercase; color: var(--muted); letter-s
   color: var(--muted);
   white-space: nowrap;
 }
-.field-note {
-  padding: 0.05rem 0.3rem;
-  border-radius: 999px;
-  background: #eef2ee;
-  text-transform: none;
-  letter-spacing: 0;
-}
 .field select, .field input { padding: 0.35rem 0.5rem; }
 .field select { cursor: pointer; }
 .field input[type='number'] { width: 6.5rem; cursor: auto; }
@@ -190,7 +217,7 @@ th { font-size: 0.8rem; text-transform: uppercase; color: var(--muted); letter-s
 }
 .chip:hover { border-color: var(--green); }
 .chip.selected { border-color: var(--green); background: var(--accent); }
-.chip .nm { flex: 1; }
+.chip .nm { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .chip-x {
   display: inline-flex;
   align-items: center;
@@ -249,47 +276,69 @@ th { font-size: 0.8rem; text-transform: uppercase; color: var(--muted); letter-s
   transition: width 0.2s ease-out;
 }
 
+/* Merging two directory entries: the value that survives is the plain one, the
+   value being dropped is struck through. */
+.merge-table td { vertical-align: top; }
+.merge-table td.kept { font-weight: 600; }
+.merge-table td.dropped { color: var(--muted); text-decoration: line-through; }
+.merge-pick { display: inline-flex; align-items: baseline; gap: 0.35rem; cursor: pointer; }
+.merge-pick input { margin: 0; }
+
 .errors { color: var(--danger); font-size: 0.85rem; }
 .empty { color: var(--muted); padding: 1rem 0; text-align: center; }
 .print-only { display: none; }
-.placeholder-side { min-height: 2rem; border-bottom: 1px dashed var(--border); }
 
 @media print {
   @page { margin: 0.5cm; }
   .app-header, .no-print, button:not(.chip) { display: none !important; }
+  /* Printing one round: the card that asked for it is the only one on the sheet. */
+  /* The hidden cards are still siblings, so :last-child below would not catch */
+  /* the target — it needs its own rule to avoid a trailing blank page. */
+  .print-one .card:not(.print-target) { display: none !important; }
+  .print-one .print-target { break-after: auto; page-break-after: auto; }
   main { max-width: none; padding: 0; }
   .card {
     border: none;
     padding: 0.75rem;
     margin-bottom: 0;
-    height: 100vh;
-    display: flex;
-    flex-direction: column;
   }
   .card h3 { margin: 0 0 0.5rem; }
+  /* Two courts to a row (PRINT_COLUMNS), five rows to a sheet: ten a page. */
+  /* minmax(0, 1fr) keeps a long name from widening its column past half. */
   .courts {
-    display: flex;
-    flex-direction: column;
-    flex: 1;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 0.5rem;
   }
   .court {
     break-inside: avoid;
-    /* subtract total gap (n-1 gaps of 0.5rem) from available height before dividing */
-    height: calc((100vh - 3rem - (var(--court-count, 6) - 1) * 0.5rem) / var(--court-count, 6));
+    /* A row takes a fifth of the page — or 1/n for a shorter round — with its */
+    /* gap and room reserved for the heading, so an 11th court starts a new */
+    /* sheet. It is a floor, not a fixed height: a court needing more room grows */
+    /* (its whole row with it) rather than spilling text over its neighbour. */
+    min-height: calc((100vh - 4rem) / var(--print-rows, 5) - 0.5rem);
     display: flex;
     flex-direction: column;
     justify-content: space-around;
     border-top: 1px solid var(--border);
-    padding: 0.25rem 0.75rem;
+    padding: 0.2rem 0.75rem;
   }
+  /* Tight enough that six courts — including a flagged one, which costs an */
+  /* extra line — still clear the slot above on both A4 and US Letter. */
+  .court h4 { font-size: 0.9rem; margin: 0 0 0.1rem; }
+  .court .side { padding: 0.05rem 0; }
+  .court .vs { font-size: 0.7rem; line-height: 1.1; margin: 0.05rem 0; }
+  .court .flag { font-size: 0.7rem; line-height: 1.2; }
   .card:not(:last-child) { break-after: page; page-break-after: always; }
   .print-only { display: block; }
   .print-only.inline { display: inline; }
   .chip {
     border: none;
     background: transparent !important;
-    padding: 0.1rem 0;
+    font-size: 0.9rem;
+    line-height: 1.2;
+    padding: 0.05rem 0;
+    margin: 0.05rem 0;
     cursor: default;
   }
 }
