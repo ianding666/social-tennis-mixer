@@ -9,7 +9,7 @@ export default defineConfig({
     react(),
     VitePWA({
       registerType: 'autoUpdate',
-      includeAssets: ['favicon.svg'],
+      includeAssets: ['favicon.png'],
       manifest: {
         name: 'Social Tennis Mixer',
         short_name: 'Tennis Mixer',
@@ -20,8 +20,7 @@ export default defineConfig({
         start_url: './',
         scope: './',
         icons: [
-          { src: 'favicon.svg', sizes: 'any', type: 'image/svg+xml', purpose: 'any' },
-          { src: 'favicon.svg', sizes: 'any', type: 'image/svg+xml', purpose: 'maskable' }
+          { src: 'favicon.png', sizes: '250x250', type: 'image/png', purpose: 'any' }
         ]
       },
       workbox: {

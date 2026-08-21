@@ -97,7 +97,14 @@ export default function App() {
   return (
     <>
       <header className="app-header">
-        <img src={`${import.meta.env.BASE_URL}logo.png`} alt="Tennis Masters Auckland" className="app-logo" />
+        <a
+          className="app-logo-link"
+          href="https://diademsports.co.nz"
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          <img src={`${import.meta.env.BASE_URL}logo.png`} alt="Diadem" className="app-logo" />
+        </a>
         <nav>
           <button className={view === 'directory' ? 'active' : ''} onClick={() => setView('directory')}>
             Player Directory

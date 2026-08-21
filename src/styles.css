@@ -65,6 +65,7 @@ a { color: var(--green); }
 }
 .app-header h1 { font-size: 1.15rem; margin: 0; }
 .app-logo { height: 48px; width: auto; display: block; border-radius: 8px; }
+.app-logo-link { display: flex; text-decoration: none; }
 .app-header nav { display: flex; gap: 0.4rem; }
 .app-header nav button {
   background: rgba(0, 0, 0, 0.06);
