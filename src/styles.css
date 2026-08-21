@@ -308,12 +308,16 @@ th { font-size: 0.8rem; text-transform: uppercase; color: var(--muted); letter-s
 
 @media print {
   @page { margin: 0.5cm; }
+  /* How much sheet the courts may claim. It cannot be 100vh: in print vh tracks */
+  /* the whole sheet, margins included, so a card sized to fill it overflowed the */
+  /* printable area by the margins' worth and the browser opened a blank second */
+  /* sheet to hold that sliver. A fixed budget instead — US Letter, the shorter of */
+  /* the two papers, is 27.9cm; take off the 1cm of @page margins, then leave room */
+  /* for the card's padding and a round heading that wraps to two lines. */
+  :root { --print-sheet: 24cm; }
   .app-header, .no-print, button:not(.chip) { display: none !important; }
   /* Printing one round: the card that asked for it is the only one on the sheet. */
-  /* The hidden cards are still siblings, so :last-child below would not catch */
-  /* the target — it needs its own rule to avoid a trailing blank page. */
   .print-one .card:not(.print-target) { display: none !important; }
-  .print-one .print-target { break-after: auto; page-break-after: auto; }
   main { max-width: none; padding: 0; }
   .card {
     border: none;
@@ -330,11 +334,11 @@ th { font-size: 0.8rem; text-transform: uppercase; color: var(--muted); letter-s
   }
   .court {
     break-inside: avoid;
-    /* A row takes a fifth of the page — or 1/n for a shorter round — with its */
-    /* gap and room reserved for the heading, so an 11th court starts a new */
-    /* sheet. It is a floor, not a fixed height: a court needing more room grows */
-    /* (its whole row with it) rather than spilling text over its neighbour. */
-    min-height: calc((100vh - 4rem) / var(--print-rows, 5) - 0.5rem);
+    /* A row takes a fifth of the sheet budget — or 1/n for a shorter round — */
+    /* less its gap, so an 11th court starts a new sheet. It is a floor, not a */
+    /* fixed height: a court needing more room grows (its whole row with it) */
+    /* rather than spilling text over its neighbour. */
+    min-height: calc(var(--print-sheet) / var(--print-rows, 5) - 0.5rem);
     display: flex;
     flex-direction: column;
     justify-content: space-around;
@@ -347,7 +351,24 @@ th { font-size: 0.8rem; text-transform: uppercase; color: var(--muted); letter-s
   .court .side { padding: 0.05rem 0; }
   .court .vs { font-size: 0.7rem; line-height: 1.1; margin: 0.05rem 0; }
   .court .flag { font-size: 0.7rem; line-height: 1.2; }
-  .card:not(:last-child) { break-after: page; page-break-after: always; }
+  /* One round to a sheet. The break goes *before* each round after the first,
+     never after a round: the roster and next-round cards are display:none here
+     but are still siblings, so a break-after rule keyed on :last-child fired on
+     the last printed round and cost a blank trailing sheet. A break-before on
+     "a printable card that follows a printable card" only ever falls between two
+     sheets of real content. */
+  .card:not(.no-print) ~ .card:not(.no-print) {
+    break-before: page;
+    page-break-before: always;
+  }
+  /* Printing one round: it is the only card on the sheet, so it takes no break
+     on either side — !important because the sibling rule above outweighs it. */
+  .print-one .print-target {
+    break-before: auto !important;
+    page-break-before: auto !important;
+    break-after: auto !important;
+    page-break-after: auto !important;
+  }
   .print-only { display: block; }
   .print-only.inline { display: inline; }
   .chip {
